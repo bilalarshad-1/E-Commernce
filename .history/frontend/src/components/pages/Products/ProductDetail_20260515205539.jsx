@@ -15,19 +15,16 @@ import {
   FiEye,
   FiTag,
   FiCalendar,
-  FiUser,
-  FiQrCode,
   FiVideo,
-  FiPlus,
-  FiMinus,
-  FiRefreshCw
+  FiRefreshCw,
+  FiFolder
 } from 'react-icons/fi';
 import { format } from 'date-fns';
 
 const ProductDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { hasRole, user } = useAuth();
+  const { hasRole } = useAuth();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -146,14 +143,16 @@ const ProductDetail = () => {
     ...(product.gallery || [])
   ].filter(img => img && img.url);
 
-  const totalStock = product.hasVariations
-    ? product.variations.reduce((sum, v) => sum + v.stock, 0)
-    : product.inventory.currentStock;
+  const totalStock = product.hasVariations && product.variations?.length > 0
+    ? product.variations.reduce((sum, v) => sum + (v.stock || 0), 0)
+    : product.inventory?.currentStock || 0;
 
-  const profitMargin = ((product.price - product.buyPrice) / product.price * 100).toFixed(1);
+  const profitMargin = product.price && product.buyPrice
+    ? (((product.price - product.buyPrice) / product.price) * 100).toFixed(1)
+    : 0;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -162,7 +161,7 @@ const ProductDetail = () => {
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{product.productName}</h1>
-            <p className="text-gray-600 mt-1">SKU: {product._id.slice(-8)}</p>
+            <p className="text-gray-600 mt-1">SKU: {product._id?.slice(-8)}</p>
           </div>
         </div>
         <div className="flex gap-3">
@@ -230,42 +229,44 @@ const ProductDetail = () => {
           </div>
 
           {/* Barcode & QR */}
-          <div className="card mt-6">
-            <h3 className="font-semibold text-gray-900 mb-4">Barcode & QR Code</h3>
-            <div className="space-y-4">
-              {product.barcode && (
-                <div className="text-center">
-                  <img
-                    src={product.barcode.imageUrl}
-                    alt="Barcode"
-                    className="mx-auto max-w-full h-20 object-contain"
-                  />
-                  <p className="text-sm font-mono mt-2">{product.barcode.number}</p>
-                  <button
-                    onClick={handlePrintBarcode}
-                    className="mt-2 text-sm text-primary-600 hover:text-primary-700"
-                  >
-                    Print Barcode
-                  </button>
-                </div>
-              )}
-              {product.qrCode && (
-                <div className="text-center border-t pt-4">
-                  <img
-                    src={product.qrCode.imageUrl}
-                    alt="QR Code"
-                    className="mx-auto w-24 h-24 object-contain"
-                  />
-                  <button
-                    onClick={handlePrintQR}
-                    className="mt-2 text-sm text-primary-600 hover:text-primary-700"
-                  >
-                    Print QR Code
-                  </button>
-                </div>
-              )}
+          {product.barcode && (
+            <div className="card mt-6">
+              <h3 className="font-semibold text-gray-900 mb-4">Barcode & QR Code</h3>
+              <div className="space-y-4">
+                {product.barcode.imageUrl && (
+                  <div className="text-center">
+                    <img
+                      src={product.barcode.imageUrl}
+                      alt="Barcode"
+                      className="mx-auto max-w-full h-20 object-contain"
+                    />
+                    <p className="text-sm font-mono mt-2">{product.barcode.number}</p>
+                    <button
+                      onClick={handlePrintBarcode}
+                      className="mt-2 text-sm text-primary-600 hover:text-primary-700"
+                    >
+                      Print Barcode
+                    </button>
+                  </div>
+                )}
+                {product.qrCode?.imageUrl && (
+                  <div className="text-center border-t pt-4">
+                    <img
+                      src={product.qrCode.imageUrl}
+                      alt="QR Code"
+                      className="mx-auto w-24 h-24 object-contain"
+                    />
+                    <button
+                      onClick={handlePrintQR}
+                      className="mt-2 text-sm text-primary-600 hover:text-primary-700"
+                    >
+                      Print QR Code
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Right Column - Details */}
@@ -317,14 +318,46 @@ const ProductDetail = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-sm text-gray-600">Selling Price</p>
-                <p className="text-2xl font-bold text-primary-600">${product.price.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-primary-600">${(product.price || 0).toFixed(2)}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-600">Cost Price</p>
-                <p className="text-lg font-medium text-gray-900">${product.buyPrice.toFixed(2)}</p>
+                <p className="text-lg font-medium text-gray-900">${(product.buyPrice || 0).toFixed(2)}</p>
               </div>
             </div>
           </div>
+
+          {/* Categories */}
+          {product.categories && product.categories.length > 0 && (
+            <div className="card">
+              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <FiFolder className="h-5 w-5" />
+                Categories
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {product.categories.map((category, index) => {
+                  const categoryName = typeof category === 'object' ? category.name : category;
+                  return (
+                    <Link
+                      key={index}
+                      to={`/categories/${typeof category === 'object' ? category._id : category}`}
+                      className="px-3 py-1 bg-primary-50 text-primary-700 rounded-full text-sm hover:bg-primary-100 transition-colors"
+                    >
+                      {categoryName}
+                    </Link>
+                  );
+                })}
+              </div>
+              {product.primaryCategory && (
+                <div className="mt-2 text-sm text-gray-600">
+                  <span className="font-medium">Primary:</span>{' '}
+                  {typeof product.primaryCategory === 'object' 
+                    ? product.primaryCategory.name 
+                    : product.primaryCategory}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Description */}
           <div className="card">
@@ -335,7 +368,7 @@ const ProductDetail = () => {
           </div>
 
           {/* Variations */}
-          {product.hasVariations && product.variations.length > 0 && (
+          {product.hasVariations && product.variations?.length > 0 && (
             <div className="card">
               <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                 <FiBarChart2 className="h-5 w-5" />
@@ -375,7 +408,7 @@ const ProductDetail = () => {
           )}
 
           {/* Colors */}
-          {product.hasColors && product.colors.length > 0 && (
+          {product.hasColors && product.colors?.length > 0 && (
             <div className="card">
               <h3 className="font-semibold text-gray-900 mb-3">Available Colors</h3>
               <div className="flex flex-wrap gap-3">
@@ -392,46 +425,25 @@ const ProductDetail = () => {
             </div>
           )}
 
-          {/* Tags & Categories */}
-          <div className="card">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                  <FiTag className="h-4 w-4" />
-                  Tags
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {product.tags?.map((tag, index) => (
-                    <span
-                      key={index}
-                      className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                  {(!product.tags || product.tags.length === 0) && (
-                    <p className="text-sm text-gray-500">No tags</p>
-                  )}
-                </div>
-              </div>
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-2">Categories</h3>
-                <div className="flex flex-wrap gap-2">
-                  {product.categories?.map((category, index) => (
-                    <span
-                      key={index}
-                      className="px-2 py-1 bg-primary-50 text-primary-700 rounded-full text-xs"
-                    >
-                      {category}
-                    </span>
-                  ))}
-                  {(!product.categories || product.categories.length === 0) && (
-                    <p className="text-sm text-gray-500">No categories</p>
-                  )}
-                </div>
+          {/* Tags */}
+          {product.tags && product.tags.length > 0 && (
+            <div className="card">
+              <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                <FiTag className="h-4 w-4" />
+                Tags
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {product.tags.map((tag, index) => (
+                  <span
+                    key={index}
+                    className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs"
+                  >
+                    {tag}
+                  </span>
+                ))}
               </div>
             </div>
-          </div>
+          )}
 
           {/* YouTube Video */}
           {product.youtubeVideoUrl && (
@@ -482,9 +494,9 @@ const ProductDetail = () => {
               <p className="text-gray-600">Last Updated</p>
               <p className="font-medium">{format(new Date(product.updatedAt), 'MMM dd, yyyy')}</p>
               <p className="text-gray-600">Total Views</p>
-              <p className="font-medium">{product.views}</p>
+              <p className="font-medium">{product.views || 0}</p>
               <p className="text-gray-600">Total Sales</p>
-              <p className="font-medium">{product.sales}</p>
+              <p className="font-medium">{product.sales || 0}</p>
             </div>
           </div>
         </div>
@@ -501,10 +513,10 @@ const ProductDetail = () => {
                 Are you sure you want to delete "{product.productName}"? This action cannot be undone.
               </p>
               <div className="flex gap-3">
-                <button onClick={handleDeleteProduct} className="btn-primary flex-1 bg-red-600 hover:bg-red-700">
+                <button onClick={handleDeleteProduct} className="flex-1 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors">
                   Delete
                 </button>
-                <button onClick={() => setShowDeleteModal(false)} className="btn-secondary flex-1">
+                <button onClick={() => setShowDeleteModal(false)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
                   Cancel
                 </button>
               </div>
@@ -521,7 +533,7 @@ const ProductDetail = () => {
             <div className="relative bg-white rounded-lg max-w-md w-full p-6">
               <h3 className="text-lg font-semibold mb-4">Update Stock</h3>
               <div className="space-y-4">
-                {product.hasVariations && (
+                {product.hasVariations && product.variations?.length > 0 && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Variation</label>
                     <select

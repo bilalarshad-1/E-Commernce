@@ -1,7 +1,6 @@
 // controllers/productController.js
 const Product = require('../models/Product');
 const Category = require('../models/Category');
-const auditLog = require('../middleware/auditMiddleware');
 const { cloudinary } = require('../config/cloudinary');
 const QRCode = require('qrcode');
 const bwipjs = require('bwip-js');
@@ -16,7 +15,7 @@ const generateUniqueBarcodeNumber = async () => {
   // Check if barcode number already exists
   const existingProduct = await Product.findOne({ 'barcode.number': barcodeNumber });
   if (existingProduct) {
-    return generateUniqueBarcodeNumber();
+    return generateUniqueBarcodeNumber(); // Recursively generate new one
   }
   
   return barcodeNumber;
@@ -96,7 +95,7 @@ exports.createProduct = async (req, res) => {
     productData.categoryNames = categoryNames;
     productData.primaryCategory = primaryCategory;
     
-    // Handle main image upload to Cloudinary
+    // Handle main image upload to Cloudinary (only product images)
     if (req.files && req.files.mainImage && req.files.mainImage[0]) {
       productData.mainImage = {
         url: req.files.mainImage[0].path,
@@ -113,7 +112,7 @@ exports.createProduct = async (req, res) => {
       }));
     }
     
-    // Generate unique barcode number
+    // Generate unique barcode number (NO IMAGE)
     const barcodeNumber = await generateUniqueBarcodeNumber();
     productData.barcode = {
       number: barcodeNumber,
@@ -122,7 +121,7 @@ exports.createProduct = async (req, res) => {
     
     const product = await Product.create(productData);
     
-    // Set QR data after product is created
+    // Set QR data after product is created (has _id)
     const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     product.qrCode = {
       data: `${baseUrl}/products/${product._id}`
@@ -132,20 +131,12 @@ exports.createProduct = async (req, res) => {
     // Populate category details
     await product.populate('categories primaryCategory');
     
-    // Audit log - CORRECTED: pass status as string
-    await auditLog(req, 'PRODUCT_CREATE', 'Product', product._id, {
-      productName: product.productName,
-      price: product.price
-    }, 'SUCCESS');
-    
     res.status(201).json({
       success: true,
       data: product
     });
   } catch (error) {
     console.error('Create product error:', error);
-    // CORRECTED: pass error message as details, status as 'FAILED'
-    await auditLog(req, 'PRODUCT_CREATE', 'Product', null, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -170,17 +161,6 @@ exports.getProducts = async (req, res) => {
     if (req.query.tag) filter.tags = req.query.tag;
     if (req.query.minPrice) filter.price = { $gte: parseFloat(req.query.minPrice) };
     if (req.query.maxPrice) filter.price = { ...filter.price, $lte: parseFloat(req.query.maxPrice) };
-    
-    // Category filtering
-    if (req.query.category) {
-      let category = await Category.findById(req.query.category);
-      if (!category) {
-        category = await Category.findOne({ slug: req.query.category });
-      }
-      if (category) {
-        filter.categories = { $in: [category._id] };
-      }
-    }
     
     // Search functionality
     if (req.query.search) {
@@ -208,12 +188,6 @@ exports.getProducts = async (req, res) => {
     
     const products = await Product.paginate(filter, options);
     
-    // CORRECTED: pass details as object, not string
-    await auditLog(req, 'VIEW', 'Product', null, { 
-      action: 'viewed-products-list',
-      filters: req.query 
-    }, 'SUCCESS');
-    
     res.status(200).json({
       success: true,
       data: products.docs,
@@ -225,7 +199,6 @@ exports.getProducts = async (req, res) => {
       }
     });
   } catch (error) {
-    await auditLog(req, 'VIEW', 'Product', null, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -256,16 +229,11 @@ exports.getProduct = async (req, res) => {
     product.views += 1;
     await product.save();
     
-    await auditLog(req, 'PRODUCT_VIEW', 'Product', product._id, {
-      productName: product.productName
-    }, 'SUCCESS');
-    
     res.status(200).json({
       success: true,
       data: product
     });
   } catch (error) {
-    await auditLog(req, 'PRODUCT_VIEW', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -274,9 +242,9 @@ exports.getProduct = async (req, res) => {
   }
 };
 
-// @desc    Get product by barcode
+// @desc    Get product by barcode (for scanning)
 // @route   GET /api/products/barcode/:barcode
-// @access  Public
+// @access  Public/Private
 exports.getProductByBarcode = async (req, res) => {
   try {
     const product = await Product.findOne({ 'barcode.number': req.params.barcode })
@@ -303,7 +271,7 @@ exports.getProductByBarcode = async (req, res) => {
   }
 };
 
-// @desc    Generate barcode image on the fly
+// @desc    Generate barcode image on the fly (for display/printing)
 // @route   GET /api/products/:id/barcode-image
 // @access  Public
 exports.generateBarcodeImage = async (req, res) => {
@@ -317,6 +285,7 @@ exports.generateBarcodeImage = async (req, res) => {
       });
     }
     
+    // Get parameters from query
     const scale = parseInt(req.query.scale) || 3;
     const height = parseInt(req.query.height) || 10;
     const includeText = req.query.includeText !== 'false';
@@ -351,7 +320,7 @@ exports.generateBarcodeImage = async (req, res) => {
   }
 };
 
-// @desc    Generate QR code image on the fly
+// @desc    Generate QR code image on the fly (for display/printing)
 // @route   GET /api/products/:id/qr-image
 // @access  Public
 exports.generateQRImage = async (req, res) => {
@@ -365,14 +334,17 @@ exports.generateQRImage = async (req, res) => {
       });
     }
     
+    // Get parameters from query
     const size = parseInt(req.query.size) || 300;
     const margin = parseInt(req.query.margin) || 2;
     
-    QRCode.toBuffer(product.qrCode.data, {
+    const qrOptions = {
       errorCorrectionLevel: 'H',
       margin: margin,
       width: size
-    }, (err, buffer) => {
+    };
+    
+    QRCode.toBuffer(product.qrCode.data, qrOptions, (err, buffer) => {
       if (err) {
         console.error('QR generation error:', err);
         return res.status(500).json({
@@ -481,6 +453,45 @@ exports.downloadQR = async (req, res) => {
   }
 };
 
+// @desc    Generate/Regenerate barcode for existing product
+// @route   POST /api/products/:id/regenerate-barcode
+// @access  Private
+exports.regenerateBarcode = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+    
+    const newBarcodeNumber = await generateUniqueBarcodeNumber();
+    
+    product.barcode = {
+      number: newBarcodeNumber,
+      format: product.barcode?.format || 'CODE128'
+    };
+    
+    await product.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Barcode regenerated successfully',
+      data: {
+        barcode: product.barcode
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
 // @desc    Update product
 // @route   PUT /api/products/:id
 // @access  Private
@@ -550,24 +561,25 @@ exports.updateProduct = async (req, res) => {
       updateData.gallery = [...(product.gallery || []), ...newGallery];
     }
     
+    // Update QR data if product name or ID changed
+    if (product.productName !== req.body.productName || !product.qrCode.data) {
+      const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      updateData.qrCode = {
+        data: `${baseUrl}/products/${product._id}`
+      };
+    }
+    
     product = await Product.findByIdAndUpdate(
       req.params.id,
       updateData,
       { new: true, runValidators: true }
     ).populate('categories primaryCategory');
     
-    // CORRECTED: pass details as object
-    await auditLog(req, 'PRODUCT_UPDATE', 'Product', product._id, {
-      productName: product.productName,
-      updatedFields: Object.keys(req.body)
-    }, 'SUCCESS');
-    
     res.status(200).json({
       success: true,
       data: product
     });
   } catch (error) {
-    await auditLog(req, 'PRODUCT_UPDATE', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -602,21 +614,13 @@ exports.deleteProduct = async (req, res) => {
       }
     }
     
-    const productName = product.productName;
     await product.deleteOne();
-    
-    // CORRECTED: pass details as object
-    await auditLog(req, 'PRODUCT_DELETE', 'Product', product._id, {
-      productName: productName,
-      deletedBy: req.user.email
-    }, 'SUCCESS');
     
     res.status(200).json({
       success: true,
       message: 'Product deleted successfully'
     });
   } catch (error) {
-    await auditLog(req, 'PRODUCT_DELETE', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -640,8 +644,6 @@ exports.updateStock = async (req, res) => {
       });
     }
     
-    let oldStock, newStock;
-    
     if (variationId && product.hasVariations) {
       const variation = product.variations.id(variationId);
       if (!variation) {
@@ -651,43 +653,30 @@ exports.updateStock = async (req, res) => {
         });
       }
       
-      oldStock = variation.stock;
       switch(type) {
         case 'increase':
-          newStock = (variation.stock || 0) + stock;
+          variation.stock = (variation.stock || 0) + stock;
           break;
         case 'decrease':
-          newStock = Math.max(0, (variation.stock || 0) - stock);
+          variation.stock = Math.max(0, (variation.stock || 0) - stock);
           break;
         default:
-          newStock = stock;
+          variation.stock = stock;
       }
-      variation.stock = newStock;
     } else {
-      oldStock = product.inventory?.currentStock || 0;
       switch(type) {
         case 'increase':
-          newStock = (product.inventory?.currentStock || 0) + stock;
+          product.inventory.currentStock = (product.inventory.currentStock || 0) + stock;
           break;
         case 'decrease':
-          newStock = Math.max(0, (product.inventory?.currentStock || 0) - stock);
+          product.inventory.currentStock = Math.max(0, (product.inventory.currentStock || 0) - stock);
           break;
         default:
-          newStock = stock;
+          product.inventory.currentStock = stock;
       }
-      product.inventory.currentStock = newStock;
     }
     
     await product.save();
-    
-    await auditLog(req, 'STOCK_UPDATE', 'Product', product._id, {
-      productName: product.productName,
-      variationId: variationId || null,
-      oldStock,
-      newStock,
-      changeType: type,
-      changeAmount: stock
-    }, 'SUCCESS');
     
     res.status(200).json({
       success: true,
@@ -695,7 +684,6 @@ exports.updateStock = async (req, res) => {
       message: 'Stock updated successfully'
     });
   } catch (error) {
-    await auditLog(req, 'STOCK_UPDATE', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -757,52 +745,6 @@ exports.getProductStats = async (req, res) => {
         outOfStockProducts: stats[0].outOfStockProducts[0]?.count || 0,
         averagePrice: stats[0].averagePrice[0]?.avgPrice || 0,
         totalInventoryValue: stats[0].totalValue[0]?.totalValue || 0
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server Error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Regenerate barcode for product
-// @route   POST /api/products/:id/regenerate-barcode
-// @access  Private
-exports.regenerateBarcode = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
-    }
-    
-    const newBarcodeNumber = await generateUniqueBarcodeNumber();
-    
-    product.barcode = {
-      number: newBarcodeNumber,
-      format: product.barcode?.format || 'CODE128'
-    };
-    
-    await product.save();
-    
-    await auditLog(req, 'PRODUCT_UPDATE', 'Product', product._id, {
-      productName: product.productName,
-      action: 'barcode_regenerated',
-      oldBarcode: product.barcode?.number,
-      newBarcode: newBarcodeNumber
-    }, 'SUCCESS');
-    
-    res.status(200).json({
-      success: true,
-      message: 'Barcode regenerated successfully',
-      data: {
-        barcode: product.barcode
       }
     });
   } catch (error) {

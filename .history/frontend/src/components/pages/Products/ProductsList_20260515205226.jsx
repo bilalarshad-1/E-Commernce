@@ -1,7 +1,8 @@
+// ProductsList.jsx
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { productService, categoryService } from '../../services/api';
-import { useAuth } from '../../context/AuthContext';
+import { productService, categoryService } from '../../../services/api';
+import { useAuth } from '../../../context/AuthContext';
 import toast from 'react-hot-toast';
 import { 
   FiPlus, 
@@ -16,15 +17,24 @@ import {
   FiRefreshCw,
   FiAlertCircle,
   FiChevronLeft,
-  FiChevronRight
+  FiChevronRight,
+  FiPrinter,
+  FiDownload,
+  FiRotateCw,
+  FiMoreVertical,
+  FiCopy,
+  FiCheck
 } from 'react-icons/fi';
+import { BiBarcode, BiQr } from 'react-icons/bi';
 
 const ProductsList = () => {
   const { hasRole } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showStockModal, setShowStockModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [stockUpdate, setStockUpdate] = useState({ stock: 0, type: 'set', variationId: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [categories, setCategories] = useState([]);
   const [filters, setFilters] = useState({
@@ -40,12 +50,23 @@ const ProductsList = () => {
   const [totalPages, setTotalPages] = useState(1);
   const [totalProducts, setTotalProducts] = useState(0);
   const [stats, setStats] = useState(null);
+  const [openActionMenu, setOpenActionMenu] = useState(null);
+  const [copiedBarcode, setCopiedBarcode] = useState(null);
 
   useEffect(() => {
     fetchProducts();
     fetchStats();
     fetchCategories();
   }, [currentPage, filters]);
+
+  useEffect(() => {
+    const delayDebounce = setTimeout(() => {
+      if (searchTerm !== undefined) {
+        fetchProducts();
+      }
+    }, 500);
+    return () => clearTimeout(delayDebounce);
+  }, [searchTerm]);
 
   const fetchProducts = async () => {
     try {
@@ -102,6 +123,210 @@ const ProductsList = () => {
     }
   };
 
+  const handleUpdateStock = async () => {
+    try {
+      await productService.updateStock(selectedProduct._id, stockUpdate);
+      toast.success('Stock updated successfully');
+      setShowStockModal(false);
+      fetchProducts();
+      fetchStats();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to update stock');
+    }
+  };
+
+  const handlePrintBarcode = (product) => {
+    if (!product.barcode?.number) {
+      toast.error('No barcode available for this product');
+      return;
+    }
+    
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Barcode - ${product.productName}</title>
+          <style>
+            body { 
+              font-family: Arial, sans-serif; 
+              padding: 20px; 
+              text-align: center;
+              margin: 0;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+            }
+            .barcode-container {
+              border: 1px solid #ddd;
+              padding: 20px;
+              border-radius: 8px;
+              background: white;
+            }
+            .barcode-number {
+              font-family: 'Courier New', monospace;
+              font-size: 24px;
+              letter-spacing: 2px;
+              margin: 20px 0;
+              font-weight: bold;
+            }
+            .product-name {
+              font-size: 14px;
+              margin-top: 10px;
+              color: #333;
+            }
+            .price {
+              font-size: 16px;
+              font-weight: bold;
+              color: #2563eb;
+              margin-top: 10px;
+            }
+            @media print {
+              body { margin: 0; padding: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="barcode-container">
+            <div class="barcode-number">*${product.barcode.number}*</div>
+            <div class="product-name">${product.productName}</div>
+            <div class="price">$${(product.price || 0).toFixed(2)}</div>
+            <div class="no-print" style="margin-top: 20px;">
+              <button onclick="window.print()" style="padding: 10px 20px; margin: 5px;">Print</button>
+              <button onclick="window.close()" style="padding: 10px 20px; margin: 5px;">Close</button>
+            </div>
+          </div>
+          <script>
+            window.print();
+            setTimeout(() => window.close(), 500);
+          </script>
+        </body>
+      </html>
+    `);
+  };
+
+  const handlePrintQR = (product) => {
+    if (!product.qrCode?.imageUrl && !product._id) {
+      toast.error('No QR code available for this product');
+      return;
+    }
+    
+    const qrUrl = product.qrCode?.imageUrl || `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/product/${product._id}`)}`;
+    
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>QR Code - ${product.productName}</title>
+          <style>
+            body { 
+              font-family: Arial, sans-serif; 
+              padding: 20px; 
+              text-align: center;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+            }
+            .qr-container {
+              text-align: center;
+              border: 1px solid #ddd;
+              padding: 20px;
+              border-radius: 8px;
+            }
+            img { 
+              max-width: 200px; 
+              margin: 20px auto;
+            }
+            .product-name { 
+              font-size: 14px; 
+              margin-top: 10px;
+            }
+            @media print {
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="qr-container">
+            <img src="${qrUrl}" alt="QR Code" />
+            <div class="product-name">${product.productName}</div>
+            <div class="product-id" style="font-size: 12px; color: #666; margin-top: 5px;">ID: ${product._id}</div>
+            <div class="no-print" style="margin-top: 20px;">
+              <button onclick="window.print()" style="padding: 10px 20px; margin: 5px;">Print</button>
+              <button onclick="window.close()" style="padding: 10px 20px; margin: 5px;">Close</button>
+            </div>
+          </div>
+          <script>
+            window.print();
+            setTimeout(() => window.close(), 500);
+          </script>
+        </body>
+      </html>
+    `);
+  };
+
+  const handleDownloadBarcode = async (product) => {
+    if (!product.barcode?.number) {
+      toast.error('No barcode available');
+      return;
+    }
+    
+    try {
+      // Create a canvas to generate barcode image
+      const bwipjs = await import('bwip-js');
+      const canvas = document.createElement('canvas');
+      
+      bwipjs.toCanvas(canvas, {
+        bcid: 'code128',
+        text: product.barcode.number,
+        scale: 3,
+        height: 10,
+        includetext: true,
+        textxalign: 'center'
+      });
+      
+      const link = document.createElement('a');
+      link.download = `barcode-${product.barcode.number}.png`;
+      link.href = canvas.toDataURL();
+      link.click();
+      toast.success('Barcode downloaded');
+    } catch (error) {
+      // Fallback: Just print
+      handlePrintBarcode(product);
+    }
+  };
+
+  const handleDownloadQR = async (product) => {
+    if (!product.qrCode?.imageUrl && !product._id) {
+      toast.error('No QR code available');
+      return;
+    }
+    
+    const qrUrl = product.qrCode?.imageUrl || `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.origin}/product/${product._id}`)}`;
+    
+    try {
+      const response = await fetch(qrUrl);
+      const blob = await response.blob();
+      const link = document.createElement('a');
+      link.download = `qrcode-${product.productName}.png`;
+      link.href = URL.createObjectURL(blob);
+      link.click();
+      URL.revokeObjectURL(link.href);
+      toast.success('QR Code downloaded');
+    } catch (error) {
+      toast.error('Failed to download QR code');
+    }
+  };
+
+  const handleCopyBarcode = (barcodeNumber) => {
+    navigator.clipboard.writeText(barcodeNumber);
+    setCopiedBarcode(barcodeNumber);
+    toast.success('Barcode copied to clipboard');
+    setTimeout(() => setCopiedBarcode(null), 2000);
+  };
+
   const getStatusBadge = (product) => {
     if (!product.isPublished) {
       return <span className="px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-800">Draft</span>;
@@ -145,6 +370,111 @@ const ProductsList = () => {
         <div className={`${color} p-3 rounded-lg`}>
           <Icon className="h-6 w-6 text-white" />
         </div>
+      </div>
+    </div>
+  );
+
+  const ActionMenu = ({ product, onClose }) => (
+    <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+      <div className="py-1">
+        <Link
+          to={`/products/${product._id}`}
+          className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+          onClick={onClose}
+        >
+          <FiEye className="h-4 w-4" />
+          View Details
+        </Link>
+        <Link
+          to={`/products/edit/${product._id}`}
+          className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+          onClick={onClose}
+        >
+          <FiEdit2 className="h-4 w-4" />
+          Edit Product
+        </Link>
+        <button
+          onClick={() => {
+            setSelectedProduct(product);
+            setShowStockModal(true);
+            onClose();
+          }}
+          className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+        >
+          <FiRotateCw className="h-4 w-4" />
+          Update Stock
+        </button>
+        <div className="border-t border-gray-100 my-1"></div>
+        {product.barcode?.number && (
+          <>
+            <button
+              onClick={() => {
+                handlePrintBarcode(product);
+                onClose();
+              }}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+            >
+              <FiPrinter className="h-4 w-4" />
+              Print Barcode
+            </button>
+            <button
+              onClick={() => {
+                handleDownloadBarcode(product);
+                onClose();
+              }}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+            >
+              <FiDownload className="h-4 w-4" />
+              Download Barcode
+            </button>
+            <button
+              onClick={() => {
+                handleCopyBarcode(product.barcode.number);
+                onClose();
+              }}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+            >
+              {copiedBarcode === product.barcode.number ? (
+                <FiCheck className="h-4 w-4 text-green-600" />
+              ) : (
+                <FiCopy className="h-4 w-4" />
+              )}
+              Copy Barcode
+            </button>
+          </>
+        )}
+        <button
+          onClick={() => {
+            handlePrintQR(product);
+            onClose();
+          }}
+          className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+        >
+          <BiQr className="h-4 w-4" />
+          Print QR Code
+        </button>
+        <button
+          onClick={() => {
+            handleDownloadQR(product);
+            onClose();
+          }}
+          className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+        >
+          <FiDownload className="h-4 w-4" />
+          Download QR Code
+        </button>
+        <div className="border-t border-gray-100 my-1"></div>
+        <button
+          onClick={() => {
+            setSelectedProduct(product);
+            setShowDeleteModal(true);
+            onClose();
+          }}
+          className="flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 w-full text-left"
+        >
+          <FiTrash2 className="h-4 w-4" />
+          Delete Product
+        </button>
       </div>
     </div>
   );
@@ -203,7 +533,6 @@ const ProductsList = () => {
               placeholder="Search products by name, description, or barcode..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && fetchProducts()}
               className="input-field pl-10"
             />
           </div>
@@ -331,7 +660,7 @@ const ProductsList = () => {
               const categoryNames = getCategoryNames(product);
               
               return (
-                <div key={product._id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+                <div key={product._id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow relative group">
                   {/* Product Image */}
                   <div className="relative h-48 bg-gray-100">
                     {product.mainImage?.url ? (
@@ -345,9 +674,21 @@ const ProductsList = () => {
                         <FiPackage className="h-12 w-12 text-gray-400" />
                       </div>
                     )}
-                    <div className="absolute top-2 right-2 flex gap-1">
+                    <div className="absolute top-2 left-2">
                       {getStatusBadge(product)}
                     </div>
+                    
+                    {/* Action Menu Button */}
+                    <button
+                      onClick={() => setOpenActionMenu(openActionMenu === product._id ? null : product._id)}
+                      className="absolute top-2 right-2 bg-white rounded-full p-1.5 shadow-sm hover:bg-gray-100 transition-colors"
+                    >
+                      <FiMoreVertical className="h-4 w-4 text-gray-600" />
+                    </button>
+                    
+                    {openActionMenu === product._id && (
+                      <ActionMenu product={product} onClose={() => setOpenActionMenu(null)} />
+                    )}
                   </div>
 
                   {/* Product Info */}
@@ -373,7 +714,7 @@ const ProductsList = () => {
                       <div className="flex items-center">
                         <span className="text-yellow-400">★</span>
                         <span className="text-sm text-gray-600 ml-1">
-                          {(product.rating || 0).toFixed(1)} ({product.totalReviews || 0})
+                          {(product.rating || 0).toFixed(1)}
                         </span>
                       </div>
                     </div>
@@ -393,37 +734,68 @@ const ProductsList = () => {
 
                     {/* Barcode */}
                     {product.barcode?.number && (
-                      <div className="text-xs text-gray-500 mb-3">
-                        <span className="font-medium">Barcode:</span> {product.barcode.number}
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
+                        <span>
+                          <span className="font-medium">Barcode:</span> {product.barcode.number}
+                        </span>
+                        <button
+                          onClick={() => handleCopyBarcode(product.barcode.number)}
+                          className="text-primary-600 hover:text-primary-700"
+                          title="Copy barcode"
+                        >
+                          {copiedBarcode === product.barcode.number ? (
+                            <FiCheck className="h-3 w-3" />
+                          ) : (
+                            <FiCopy className="h-3 w-3" />
+                          )}
+                        </button>
                       </div>
                     )}
 
-                    {/* Actions */}
-                    <div className="flex gap-2 pt-3 border-t border-gray-100">
+                    {/* Quick Action Buttons */}
+                    <div className="flex gap-1 pt-3 border-t border-gray-100">
                       <Link
                         to={`/products/${product._id}`}
-                        className="flex-1 btn-secondary text-center text-sm py-1.5"
+                        className="flex-1 btn-secondary text-center text-xs py-1.5 px-1"
+                        title="View Details"
                       >
-                        <FiEye className="h-4 w-4 inline mr-1" />
-                        View
+                        <FiEye className="h-3 w-3 mx-auto" />
                       </Link>
                       <Link
                         to={`/products/edit/${product._id}`}
-                        className="flex-1 btn-primary text-center text-sm py-1.5"
+                        className="flex-1 btn-primary text-center text-xs py-1.5 px-1"
+                        title="Edit Product"
                       >
-                        <FiEdit2 className="h-4 w-4 inline mr-1" />
-                        Edit
+                        <FiEdit2 className="h-3 w-3 mx-auto" />
                       </Link>
                       <button
                         onClick={() => {
                           setSelectedProduct(product);
-                          setShowDeleteModal(true);
+                          setShowStockModal(true);
                         }}
-                        className="flex-1 bg-red-50 text-red-600 rounded-lg text-sm py-1.5 hover:bg-red-100 transition-colors"
+                        className="flex-1 bg-blue-50 text-blue-600 rounded-lg text-xs py-1.5 px-1 hover:bg-blue-100 transition-colors"
+                        title="Update Stock"
                       >
-                        <FiTrash2 className="h-4 w-4 inline mr-1" />
-                        Delete
+                        <FiRotateCw className="h-3 w-3 mx-auto" />
                       </button>
+                      {product.barcode?.number && (
+                        <>
+                          <button
+                            onClick={() => handlePrintBarcode(product)}
+                            className="flex-1 bg-purple-50 text-purple-600 rounded-lg text-xs py-1.5 px-1 hover:bg-purple-100 transition-colors"
+                            title="Print Barcode"
+                          >
+                            <FiPrinter className="h-3 w-3 mx-auto" />
+                          </button>
+                          <button
+                            onClick={() => handleDownloadQR(product)}
+                            className="flex-1 bg-indigo-50 text-indigo-600 rounded-lg text-xs py-1.5 px-1 hover:bg-indigo-100 transition-colors"
+                            title="Download QR"
+                          >
+                            <BiQr className="h-3 w-3 mx-auto" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -474,6 +846,75 @@ const ProductsList = () => {
                   Delete
                 </button>
                 <button onClick={() => setShowDeleteModal(false)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stock Update Modal */}
+      {showStockModal && selectedProduct && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4">
+            <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" onClick={() => setShowStockModal(false)} />
+            
+            <div className="relative bg-white rounded-lg max-w-md w-full p-6">
+              <h3 className="text-lg font-semibold mb-2">Update Stock</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Product: <span className="font-medium">{selectedProduct.productName}</span>
+              </p>
+              
+              <div className="space-y-4">
+                {selectedProduct.hasVariations && selectedProduct.variations?.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Variation</label>
+                    <select
+                      value={stockUpdate.variationId}
+                      onChange={(e) => setStockUpdate({ ...stockUpdate, variationId: e.target.value })}
+                      className="input-field"
+                    >
+                      <option value="">All Variations</option>
+                      {selectedProduct.variations.map((v, i) => (
+                        <option key={i} value={v._id}>
+                          {v.name} (Current: {v.stock})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Update Type</label>
+                  <select
+                    value={stockUpdate.type}
+                    onChange={(e) => setStockUpdate({ ...stockUpdate, type: e.target.value })}
+                    className="input-field"
+                  >
+                    <option value="set">Set to specific quantity</option>
+                    <option value="increase">Increase by quantity</option>
+                    <option value="decrease">Decrease by quantity</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    value={stockUpdate.stock}
+                    onChange={(e) => setStockUpdate({ ...stockUpdate, stock: parseInt(e.target.value) || 0 })}
+                    className="input-field"
+                    min="0"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex gap-3 mt-6">
+                <button onClick={handleUpdateStock} className="btn-primary flex-1">
+                  Update Stock
+                </button>
+                <button onClick={() => setShowStockModal(false)} className="btn-secondary flex-1">
                   Cancel
                 </button>
               </div>

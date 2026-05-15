@@ -1,10 +1,10 @@
 // controllers/productController.js
 const Product = require('../models/Product');
 const Category = require('../models/Category');
-const auditLog = require('../middleware/auditMiddleware');
 const { cloudinary } = require('../config/cloudinary');
 const QRCode = require('qrcode');
 const bwipjs = require('bwip-js');
+const auditLog = require('../middleware/auditMiddleware');
 
 // Generate unique barcode number (NO IMAGE STORED)
 const generateUniqueBarcodeNumber = async () => {
@@ -49,8 +49,6 @@ const processCategories = async (categoryIds, primaryCategoryId = null) => {
 };
 
 // @desc    Create new product
-// @route   POST /api/products
-// @access  Private (Admin, Manager)
 exports.createProduct = async (req, res) => {
   try {
     const productData = {
@@ -59,36 +57,16 @@ exports.createProduct = async (req, res) => {
       updatedBy: req.user._id
     };
     
-    // Parse JSON strings if sent as strings
-    if (req.body.variations && typeof req.body.variations === 'string') {
-      productData.variations = JSON.parse(req.body.variations);
-    }
-    if (req.body.colors && typeof req.body.colors === 'string') {
-      productData.colors = JSON.parse(req.body.colors);
-    }
-    if (req.body.tags && typeof req.body.tags === 'string') {
-      productData.tags = JSON.parse(req.body.tags);
-    }
-    if (req.body.inventory && typeof req.body.inventory === 'string') {
-      productData.inventory = JSON.parse(req.body.inventory);
-    }
-    if (req.body.weight && typeof req.body.weight === 'string') {
-      productData.weight = JSON.parse(req.body.weight);
-    }
-    if (req.body.dimensions && typeof req.body.dimensions === 'string') {
-      productData.dimensions = JSON.parse(req.body.dimensions);
-    }
-    
-    // Process categories
-    let categoryIds = [];
-    if (req.body.categories) {
-      if (typeof req.body.categories === 'string') {
-        categoryIds = JSON.parse(req.body.categories);
-      } else if (Array.isArray(req.body.categories)) {
-        categoryIds = req.body.categories;
+    // Parse JSON strings
+    const jsonFields = ['variations', 'colors', 'tags', 'inventory', 'weight', 'dimensions', 'categories'];
+    for (const field of jsonFields) {
+      if (req.body[field] && typeof req.body[field] === 'string') {
+        productData[field] = JSON.parse(req.body[field]);
       }
     }
     
+    // Process categories
+    let categoryIds = productData.categories || [];
     const primaryCategoryId = req.body.primaryCategory || (categoryIds[0] || null);
     const { categories, categoryNames, primaryCategory } = await processCategories(categoryIds, primaryCategoryId);
     
@@ -104,7 +82,7 @@ exports.createProduct = async (req, res) => {
       };
     }
     
-    // Handle gallery images upload to Cloudinary
+    // Handle gallery images
     if (req.files && req.files.gallery && req.files.gallery.length > 0) {
       productData.gallery = req.files.gallery.map(file => ({
         url: file.path,
@@ -113,7 +91,7 @@ exports.createProduct = async (req, res) => {
       }));
     }
     
-    // Generate unique barcode number
+    // Generate unique barcode number (ONLY NUMBER, NO IMAGE)
     const barcodeNumber = await generateUniqueBarcodeNumber();
     productData.barcode = {
       number: barcodeNumber,
@@ -125,17 +103,17 @@ exports.createProduct = async (req, res) => {
     // Set QR data after product is created
     const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     product.qrCode = {
-      data: `${baseUrl}/products/${product._id}`
+      data: `${baseUrl}/product/${product._id}`
     };
     await product.save();
     
-    // Populate category details
     await product.populate('categories primaryCategory');
     
-    // Audit log - CORRECTED: pass status as string
+    // Audit log
     await auditLog(req, 'PRODUCT_CREATE', 'Product', product._id, {
       productName: product.productName,
-      price: product.price
+      price: product.price,
+      barcode: product.barcode.number
     }, 'SUCCESS');
     
     res.status(201).json({
@@ -143,8 +121,6 @@ exports.createProduct = async (req, res) => {
       data: product
     });
   } catch (error) {
-    console.error('Create product error:', error);
-    // CORRECTED: pass error message as details, status as 'FAILED'
     await auditLog(req, 'PRODUCT_CREATE', 'Product', null, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
@@ -154,9 +130,7 @@ exports.createProduct = async (req, res) => {
   }
 };
 
-// @desc    Get all products with filters
-// @route   GET /api/products
-// @access  Private
+// @desc    Get all products
 exports.getProducts = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -171,26 +145,12 @@ exports.getProducts = async (req, res) => {
     if (req.query.minPrice) filter.price = { $gte: parseFloat(req.query.minPrice) };
     if (req.query.maxPrice) filter.price = { ...filter.price, $lte: parseFloat(req.query.maxPrice) };
     
-    // Category filtering
-    if (req.query.category) {
-      let category = await Category.findById(req.query.category);
-      if (!category) {
-        category = await Category.findOne({ slug: req.query.category });
-      }
-      if (category) {
-        filter.categories = { $in: [category._id] };
-      }
-    }
-    
     // Search functionality
     if (req.query.search) {
       filter.$or = [
         { productName: { $regex: req.query.search, $options: 'i' } },
         { shortDescription: { $regex: req.query.search, $options: 'i' } },
-        { longDescription: { $regex: req.query.search, $options: 'i' } },
-        { 'barcode.number': { $regex: req.query.search, $options: 'i' } },
-        { categoryNames: { $regex: req.query.search, $options: 'i' } },
-        { tags: { $regex: req.query.search, $options: 'i' } }
+        { 'barcode.number': { $regex: req.query.search, $options: 'i' } }
       ];
     }
     
@@ -199,16 +159,13 @@ exports.getProducts = async (req, res) => {
       limit,
       sort,
       populate: [
-        { path: 'categories', select: 'name slug image' },
-        { path: 'primaryCategory', select: 'name slug' },
-        { path: 'createdBy', select: 'name email' },
-        { path: 'updatedBy', select: 'name email' }
+        { path: 'categories', select: 'name slug' },
+        { path: 'primaryCategory', select: 'name slug' }
       ]
     };
     
     const products = await Product.paginate(filter, options);
     
-    // CORRECTED: pass details as object, not string
     await auditLog(req, 'VIEW', 'Product', null, { 
       action: 'viewed-products-list',
       filters: req.query 
@@ -225,7 +182,6 @@ exports.getProducts = async (req, res) => {
       }
     });
   } catch (error) {
-    await auditLog(req, 'VIEW', 'Product', null, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -235,15 +191,11 @@ exports.getProducts = async (req, res) => {
 };
 
 // @desc    Get single product
-// @route   GET /api/products/:id
-// @access  Private
 exports.getProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
-      .populate('categories', 'name slug image description')
-      .populate('primaryCategory', 'name slug')
-      .populate('createdBy', 'name email')
-      .populate('updatedBy', 'name email');
+      .populate('categories', 'name slug')
+      .populate('primaryCategory', 'name slug');
     
     if (!product) {
       return res.status(404).json({
@@ -252,7 +204,6 @@ exports.getProduct = async (req, res) => {
       });
     }
     
-    // Increment view count
     product.views += 1;
     await product.save();
     
@@ -265,7 +216,6 @@ exports.getProduct = async (req, res) => {
       data: product
     });
   } catch (error) {
-    await auditLog(req, 'PRODUCT_VIEW', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -274,9 +224,7 @@ exports.getProduct = async (req, res) => {
   }
 };
 
-// @desc    Get product by barcode
-// @route   GET /api/products/barcode/:barcode
-// @access  Public
+// @desc    Get product by barcode (for scanning)
 exports.getProductByBarcode = async (req, res) => {
   try {
     const product = await Product.findOne({ 'barcode.number': req.params.barcode })
@@ -304,8 +252,6 @@ exports.getProductByBarcode = async (req, res) => {
 };
 
 // @desc    Generate barcode image on the fly
-// @route   GET /api/products/:id/barcode-image
-// @access  Public
 exports.generateBarcodeImage = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -331,7 +277,6 @@ exports.generateBarcodeImage = async (req, res) => {
       textsize: 11
     }, (err, buffer) => {
       if (err) {
-        console.error('Barcode generation error:', err);
         return res.status(500).json({
           success: false,
           message: 'Error generating barcode'
@@ -352,8 +297,6 @@ exports.generateBarcodeImage = async (req, res) => {
 };
 
 // @desc    Generate QR code image on the fly
-// @route   GET /api/products/:id/qr-image
-// @access  Public
 exports.generateQRImage = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -366,15 +309,13 @@ exports.generateQRImage = async (req, res) => {
     }
     
     const size = parseInt(req.query.size) || 300;
-    const margin = parseInt(req.query.margin) || 2;
     
     QRCode.toBuffer(product.qrCode.data, {
       errorCorrectionLevel: 'H',
-      margin: margin,
+      margin: 2,
       width: size
     }, (err, buffer) => {
       if (err) {
-        console.error('QR generation error:', err);
         return res.status(500).json({
           success: false,
           message: 'Error generating QR code'
@@ -394,9 +335,7 @@ exports.generateQRImage = async (req, res) => {
   }
 };
 
-// @desc    Download barcode as PNG
-// @route   GET /api/products/:id/barcode-download
-// @access  Public
+// @desc    Download barcode
 exports.downloadBarcode = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -440,9 +379,7 @@ exports.downloadBarcode = async (req, res) => {
   }
 };
 
-// @desc    Download QR code as PNG
-// @route   GET /api/products/:id/qr-download
-// @access  Public
+// @desc    Download QR code
 exports.downloadQR = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -482,8 +419,6 @@ exports.downloadQR = async (req, res) => {
 };
 
 // @desc    Update product
-// @route   PUT /api/products/:id
-// @access  Private
 exports.updateProduct = async (req, res) => {
   try {
     let product = await Product.findById(req.params.id);
@@ -501,24 +436,18 @@ exports.updateProduct = async (req, res) => {
     };
     
     // Parse JSON strings
-    if (req.body.variations && typeof req.body.variations === 'string') {
-      updateData.variations = JSON.parse(req.body.variations);
-    }
-    if (req.body.colors && typeof req.body.colors === 'string') {
-      updateData.colors = JSON.parse(req.body.colors);
-    }
-    if (req.body.tags && typeof req.body.tags === 'string') {
-      updateData.tags = JSON.parse(req.body.tags);
+    const jsonFields = ['variations', 'colors', 'tags', 'inventory', 'weight', 'dimensions'];
+    for (const field of jsonFields) {
+      if (req.body[field] && typeof req.body[field] === 'string') {
+        updateData[field] = JSON.parse(req.body[field]);
+      }
     }
     
     // Process categories if provided
     if (req.body.categories) {
-      let categoryIds = [];
-      if (typeof req.body.categories === 'string') {
-        categoryIds = JSON.parse(req.body.categories);
-      } else if (Array.isArray(req.body.categories)) {
-        categoryIds = req.body.categories;
-      }
+      let categoryIds = typeof req.body.categories === 'string' 
+        ? JSON.parse(req.body.categories) 
+        : req.body.categories;
       
       const primaryCategoryId = req.body.primaryCategory || (categoryIds[0] || null);
       const { categories, categoryNames, primaryCategory } = await processCategories(categoryIds, primaryCategoryId);
@@ -556,7 +485,6 @@ exports.updateProduct = async (req, res) => {
       { new: true, runValidators: true }
     ).populate('categories primaryCategory');
     
-    // CORRECTED: pass details as object
     await auditLog(req, 'PRODUCT_UPDATE', 'Product', product._id, {
       productName: product.productName,
       updatedFields: Object.keys(req.body)
@@ -577,8 +505,6 @@ exports.updateProduct = async (req, res) => {
 };
 
 // @desc    Delete product
-// @route   DELETE /api/products/:id
-// @access  Private
 exports.deleteProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -590,24 +516,21 @@ exports.deleteProduct = async (req, res) => {
       });
     }
     
-    // Delete main image from Cloudinary
+    // Delete images from Cloudinary
     if (product.mainImage && product.mainImage.publicId) {
       await cloudinary.uploader.destroy(product.mainImage.publicId);
     }
     
-    // Delete gallery images from Cloudinary
     for (const image of product.gallery) {
       if (image.publicId) {
         await cloudinary.uploader.destroy(image.publicId);
       }
     }
     
-    const productName = product.productName;
     await product.deleteOne();
     
-    // CORRECTED: pass details as object
     await auditLog(req, 'PRODUCT_DELETE', 'Product', product._id, {
-      productName: productName,
+      productName: product.productName,
       deletedBy: req.user.email
     }, 'SUCCESS');
     
@@ -616,7 +539,6 @@ exports.deleteProduct = async (req, res) => {
       message: 'Product deleted successfully'
     });
   } catch (error) {
-    await auditLog(req, 'PRODUCT_DELETE', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -626,8 +548,6 @@ exports.deleteProduct = async (req, res) => {
 };
 
 // @desc    Update stock
-// @route   PUT /api/products/:id/stock
-// @access  Private
 exports.updateStock = async (req, res) => {
   try {
     const { stock, variationId, type = 'set' } = req.body;
@@ -640,8 +560,6 @@ exports.updateStock = async (req, res) => {
       });
     }
     
-    let oldStock, newStock;
-    
     if (variationId && product.hasVariations) {
       const variation = product.variations.id(variationId);
       if (!variation) {
@@ -651,40 +569,34 @@ exports.updateStock = async (req, res) => {
         });
       }
       
-      oldStock = variation.stock;
       switch(type) {
         case 'increase':
-          newStock = (variation.stock || 0) + stock;
+          variation.stock = (variation.stock || 0) + stock;
           break;
         case 'decrease':
-          newStock = Math.max(0, (variation.stock || 0) - stock);
+          variation.stock = Math.max(0, (variation.stock || 0) - stock);
           break;
         default:
-          newStock = stock;
+          variation.stock = stock;
       }
-      variation.stock = newStock;
     } else {
-      oldStock = product.inventory?.currentStock || 0;
       switch(type) {
         case 'increase':
-          newStock = (product.inventory?.currentStock || 0) + stock;
+          product.inventory.currentStock = (product.inventory.currentStock || 0) + stock;
           break;
         case 'decrease':
-          newStock = Math.max(0, (product.inventory?.currentStock || 0) - stock);
+          product.inventory.currentStock = Math.max(0, (product.inventory.currentStock || 0) - stock);
           break;
         default:
-          newStock = stock;
+          product.inventory.currentStock = stock;
       }
-      product.inventory.currentStock = newStock;
     }
     
     await product.save();
     
     await auditLog(req, 'STOCK_UPDATE', 'Product', product._id, {
       productName: product.productName,
-      variationId: variationId || null,
-      oldStock,
-      newStock,
+      variationId,
       changeType: type,
       changeAmount: stock
     }, 'SUCCESS');
@@ -695,7 +607,6 @@ exports.updateStock = async (req, res) => {
       message: 'Stock updated successfully'
     });
   } catch (error) {
-    await auditLog(req, 'STOCK_UPDATE', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -705,8 +616,6 @@ exports.updateStock = async (req, res) => {
 };
 
 // @desc    Get product statistics
-// @route   GET /api/products/stats/summary
-// @access  Private
 exports.getProductStats = async (req, res) => {
   try {
     const stats = await Product.aggregate([
@@ -757,52 +666,6 @@ exports.getProductStats = async (req, res) => {
         outOfStockProducts: stats[0].outOfStockProducts[0]?.count || 0,
         averagePrice: stats[0].averagePrice[0]?.avgPrice || 0,
         totalInventoryValue: stats[0].totalValue[0]?.totalValue || 0
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server Error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Regenerate barcode for product
-// @route   POST /api/products/:id/regenerate-barcode
-// @access  Private
-exports.regenerateBarcode = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
-    }
-    
-    const newBarcodeNumber = await generateUniqueBarcodeNumber();
-    
-    product.barcode = {
-      number: newBarcodeNumber,
-      format: product.barcode?.format || 'CODE128'
-    };
-    
-    await product.save();
-    
-    await auditLog(req, 'PRODUCT_UPDATE', 'Product', product._id, {
-      productName: product.productName,
-      action: 'barcode_regenerated',
-      oldBarcode: product.barcode?.number,
-      newBarcode: newBarcodeNumber
-    }, 'SUCCESS');
-    
-    res.status(200).json({
-      success: true,
-      message: 'Barcode regenerated successfully',
-      data: {
-        barcode: product.barcode
       }
     });
   } catch (error) {

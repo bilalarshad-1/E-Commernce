@@ -8,7 +8,7 @@ import Users from './components/Users';
 import AuditLogs from './components/AuditLogs';
 import ProductsList from './components/pages/Products/ProductsList';
 import ProductForm from './components/pages/Products/ProductForm';
-import ProductDetail from './components/pages/Products/ProductDetail';
+import ProductDetail from './components/Products/ProductDetail';
 import CategoriesList from './components/Categories/CategoriesList';
 import CategoryForm from './components/Categories/CategoryForm';
 import CategoryDetail from './components/Categories/CategoryDetail';
