@@ -1,12 +1,11 @@
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const AuditLog = require('../models/AuditLog');
+const auditLog = require('../middleware/auditMiddleware');
 const { cloudinary } = require('../config/cloudinary');
 const QRCode = require('qrcode');
 const bwipjs = require('bwip-js');
-
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
+const { v4: uuidv4 } = require('uuid');
 
 // Generate unique barcode
 const generateBarcode = async (productName) => {
@@ -15,6 +14,7 @@ const generateBarcode = async (productName) => {
   const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
   const barcodeNumber = `${prefix}${timestamp}${random}`;
   
+  // Generate barcode image using bwip-js
   return new Promise((resolve, reject) => {
     bwipjs.toBuffer({
       bcid: 'code128',
@@ -27,6 +27,7 @@ const generateBarcode = async (productName) => {
       if (err) {
         reject(err);
       } else {
+        // Upload to Cloudinary
         cloudinary.uploader.upload_stream({
           folder: 'products/barcodes',
           public_id: `barcode_${barcodeNumber}`
@@ -41,9 +42,10 @@ const generateBarcode = async (productName) => {
 
 // Generate QR code
 const generateQRCode = async (productId, productName) => {
-  const qrData = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/product/${productId}`;
+  const qrData = `${process.env.QR_BASE_URL}/product/${productId}`;
   const qrImageUrl = await QRCode.toDataURL(qrData);
   
+  // Upload QR to Cloudinary
   const result = await cloudinary.uploader.upload(qrImageUrl, {
     folder: 'products/qrcodes',
     public_id: `qr_${productId}`
@@ -62,6 +64,7 @@ const processCategories = async (categoryIds, primaryCategoryId = null) => {
   let primaryCategory = null;
   
   if (categoryIds && categoryIds.length > 0) {
+    // Fetch categories from database
     const categories = await Category.find({ 
       _id: { $in: categoryIds },
       status: 'active'
@@ -70,6 +73,7 @@ const processCategories = async (categoryIds, primaryCategoryId = null) => {
     categoryNames = categories.map(cat => cat.name.toLowerCase());
     processedCategories = categories.map(cat => cat._id);
     
+    // Validate primary category
     if (primaryCategoryId) {
       const primaryCat = categories.find(cat => cat._id.toString() === primaryCategoryId);
       if (primaryCat) {
@@ -81,230 +85,9 @@ const processCategories = async (categoryIds, primaryCategoryId = null) => {
   return { categories: processedCategories, categoryNames, primaryCategory };
 };
 
-// ============================================
-// PUBLIC ROUTES (No authentication required)
-// ============================================
-
-// @desc    Get all products with filters
-// @route   GET /api/products
-// @access  Public
-exports.getProducts = async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 12;
-    const sort = req.query.sort || '-createdAt';
-    
-    // Build filter object
-    const filter = {
-      status: 'active',
-      isPublished: true
-    };
-    
-    // Price filters
-    if (req.query.minPrice) {
-      filter.price = { ...filter.price, $gte: parseFloat(req.query.minPrice) };
-    }
-    if (req.query.maxPrice) {
-      filter.price = { ...filter.price, $lte: parseFloat(req.query.maxPrice) };
-    }
-    
-    // Featured filter
-    if (req.query.isFeatured === 'true') {
-      filter.isFeatured = true;
-    }
-    
-    // Search functionality
-    if (req.query.search) {
-      filter.$or = [
-        { productName: { $regex: req.query.search, $options: 'i' } },
-        { shortDescription: { $regex: req.query.search, $options: 'i' } },
-        { longDescription: { $regex: req.query.search, $options: 'i' } },
-        { tags: { $regex: req.query.search, $options: 'i' } }
-      ];
-    }
-    
-    // Category filtering
-    if (req.query.category) {
-      filter.categoryNames = { $regex: new RegExp(req.query.category, 'i') };
-    }
-    
-    // Tag filtering
-    if (req.query.tag) {
-      filter.tags = req.query.tag;
-    }
-    
-    const skip = (page - 1) * limit;
-    
-    let sortOption = {};
-    if (sort === '-createdAt') sortOption = { createdAt: -1 };
-    else if (sort === '-price') sortOption = { price: -1 };
-    else if (sort === 'price') sortOption = { price: 1 };
-    else if (sort === '-sales') sortOption = { sales: -1 };
-    else sortOption = { createdAt: -1 };
-    
-    const products = await Product.find(filter)
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limit)
-      .populate('categories', 'name slug')
-      .populate('primaryCategory', 'name slug');
-    
-    const total = await Product.countDocuments(filter);
-    
-    res.status(200).json({
-      success: true,
-      data: products,
-      pagination: {
-        total,
-        page,
-        pages: Math.ceil(total / limit),
-        limit
-      }
-    });
-  } catch (error) {
-    console.error('Get products error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get single product
-// @route   GET /api/products/:id
-// @access  Public
-exports.getProduct = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id)
-      .populate('categories', 'name slug description')
-      .populate('primaryCategory', 'name slug');
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
-    }
-    
-    // Increment view count
-    product.views += 1;
-    await product.save();
-    
-    res.status(200).json({
-      success: true,
-      data: product
-    });
-  } catch (error) {
-    console.error('Get product error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get product by barcode
-// @route   GET /api/products/barcode/:barcode
-// @access  Public
-exports.getProductByBarcode = async (req, res) => {
-  try {
-    const product = await Product.findOne({ 'barcode.number': req.params.barcode })
-      .populate('categories', 'name slug')
-      .populate('primaryCategory', 'name slug');
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found with this barcode'
-      });
-    }
-    
-    res.status(200).json({
-      success: true,
-      data: product
-    });
-  } catch (error) {
-    console.error('Get product by barcode error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get products by category
-// @route   GET /api/products/by-category/:categoryId
-// @access  Public
-exports.getProductsByCategory = async (req, res) => {
-  try {
-    const { categoryId } = req.params;
-    const { includeSubcategories = 'true', page = 1, limit = 20 } = req.query;
-    
-    let categoryIds = [categoryId];
-    
-    if (includeSubcategories === 'true') {
-      const getSubcategoryIds = async (parentId) => {
-        const subcategories = await Category.find({ parentCategory: parentId });
-        let ids = subcategories.map(cat => cat._id);
-        for (const subcat of subcategories) {
-          const childIds = await getSubcategoryIds(subcat._id);
-          ids = [...ids, ...childIds];
-        }
-        return ids;
-      };
-      
-      const subIds = await getSubcategoryIds(categoryId);
-      categoryIds = [...categoryIds, ...subIds];
-    }
-    
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    const products = await Product.find(
-      { 
-        categories: { $in: categoryIds },
-        status: 'active',
-        isPublished: true 
-      }
-    )
-    .sort('-createdAt')
-    .skip(skip)
-    .limit(parseInt(limit))
-    .populate('categories', 'name slug')
-    .populate('primaryCategory', 'name slug');
-    
-    const total = await Product.countDocuments({ 
-      categories: { $in: categoryIds },
-      status: 'active',
-      isPublished: true 
-    });
-    
-    res.status(200).json({
-      success: true,
-      data: products,
-      pagination: {
-        total,
-        page: parseInt(page),
-        pages: Math.ceil(total / parseInt(limit)),
-        limit: parseInt(limit)
-      }
-    });
-  } catch (error) {
-    console.error('Get products by category error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server Error',
-      error: error.message
-    });
-  }
-};
-
-// ============================================
-// ADMIN ROUTES (Authentication required)
-// ============================================
-
+// @desc    Create new product
+// @route   POST /api/products
+// @access  Private (Admin, Manager)
 // @desc    Create new product
 // @route   POST /api/products
 // @access  Private (Admin, Manager)
@@ -344,21 +127,45 @@ exports.createProduct = async (req, res) => {
     productData.categoryNames = categoryNames;
     productData.primaryCategory = primaryCategory;
     
-    // Handle main image upload
+    // Handle main image upload (Cloudinary)
     if (req.files && req.files.mainImage && req.files.mainImage[0]) {
       productData.mainImage = {
-        url: req.files.mainImage[0].path,
-        publicId: req.files.mainImage[0].filename
+        url: req.files.mainImage[0].path, // Cloudinary returns the URL in 'path'
+        publicId: req.files.mainImage[0].filename // Cloudinary returns the public ID in 'filename'
       };
     }
     
-    // Handle gallery images
+    // Handle gallery images (Cloudinary)
     if (req.files && req.files.gallery && req.files.gallery.length > 0) {
       productData.gallery = req.files.gallery.map(file => ({
-        url: file.path,
-        publicId: file.filename,
+        url: file.path, // Cloudinary URL
+        publicId: file.filename, // Cloudinary public ID
         caption: ''
       }));
+    }
+    
+    // Handle color images if any
+    if (req.body.colors && req.body.colors.length > 0 && req.files && req.files.colorImages) {
+      // This assumes you're sending color images separately
+      // You might need to adjust based on your frontend implementation
+      const colors = Array.isArray(productData.colors) ? productData.colors : JSON.parse(req.body.colors);
+      let colorImageIndex = 0;
+      
+      for (let i = 0; i < colors.length; i++) {
+        if (colors[i].images && colors[i].images.length > 0) {
+          for (let j = 0; j < colors[i].images.length; j++) {
+            if (req.files.colorImages[colorImageIndex]) {
+              colors[i].images[j] = {
+                url: req.files.colorImages[colorImageIndex].path,
+                publicId: req.files.colorImages[colorImageIndex].filename,
+                isMain: colors[i].images[j].isMain || false
+              };
+              colorImageIndex++;
+            }
+          }
+        }
+      }
+      productData.colors = colors;
     }
     
     // Generate barcode
@@ -372,7 +179,14 @@ exports.createProduct = async (req, res) => {
     product.qrCode = qrCode;
     await product.save();
     
+    // Populate category details
     await product.populate('categories primaryCategory');
+    
+    await auditLog(req, 'PRODUCT_CREATE', 'Product', product._id, {
+      productName: product.productName,
+      price: product.price,
+      categories: categoryNames
+    });
     
     res.status(201).json({
       success: true,
@@ -380,6 +194,247 @@ exports.createProduct = async (req, res) => {
     });
   } catch (error) {
     console.error('Create product error:', error);
+    await auditLog(req, 'PRODUCT_CREATE', 'Product', null, { error: error.message }, 'FAILED');
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get all products with filters
+// @route   GET /api/products
+// @access  Private
+exports.getProducts = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const sort = req.query.sort || '-createdAt';
+    
+    // Build filter object
+    const filter = {};
+    
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.isPublished) filter.isPublished = req.query.isPublished === 'true';
+    if (req.query.tag) filter.tags = req.query.tag;
+    if (req.query.minPrice) filter.price = { $gte: parseFloat(req.query.minPrice) };
+    if (req.query.maxPrice) filter.price = { ...filter.price, $lte: parseFloat(req.query.maxPrice) };
+    
+    // Enhanced category filtering
+    if (req.query.category) {
+      let categoryId = req.query.category;
+      let categoryIds = [];
+      
+      // Try to find category by ID or slug/name
+      let category = await Category.findById(categoryId);
+      if (!category) {
+        category = await Category.findOne({ 
+          $or: [
+            { slug: categoryId },
+            { name: { $regex: new RegExp(`^${categoryId}$`, 'i') } }
+          ]
+        });
+      }
+      
+      if (category) {
+        const includeSubcategories = req.query.includeSubcategories === 'true';
+        
+        if (includeSubcategories) {
+          // Get all subcategory IDs recursively
+          const getSubcategoryIds = async (parentId) => {
+            const subcategories = await Category.find({ parentCategory: parentId });
+            let ids = subcategories.map(cat => cat._id);
+            for (const subcat of subcategories) {
+              const childIds = await getSubcategoryIds(subcat._id);
+              ids = [...ids, ...childIds];
+            }
+            return ids;
+          };
+          
+          const subIds = await getSubcategoryIds(category._id);
+          categoryIds = [category._id, ...subIds];
+        } else {
+          categoryIds = [category._id];
+        }
+        
+        filter.categories = { $in: categoryIds };
+      } else {
+        // If category not found, try direct slug match in categoryNames
+        filter.categoryNames = { $regex: new RegExp(categoryId, 'i') };
+      }
+    }
+    
+    // Search functionality
+    if (req.query.search) {
+      filter.$or = [
+        { productName: { $regex: req.query.search, $options: 'i' } },
+        { shortDescription: { $regex: req.query.search, $options: 'i' } },
+        { longDescription: { $regex: req.query.search, $options: 'i' } },
+        { 'barcode.number': { $regex: req.query.search, $options: 'i' } },
+        { categoryNames: { $regex: req.query.search, $options: 'i' } },
+        { tags: { $regex: req.query.search, $options: 'i' } }
+      ];
+    }
+    
+    const options = {
+      page,
+      limit,
+      sort,
+      populate: [
+        { path: 'categories', select: 'name slug image' },
+        { path: 'primaryCategory', select: 'name slug' },
+        { path: 'createdBy', select: 'name email' },
+        { path: 'updatedBy', select: 'name email' }
+      ],
+      lean: false
+    };
+    
+    const products = await Product.paginate(filter, options);
+    
+    await auditLog(req, 'VIEW', 'Product', null, { 
+      action: 'viewed-products-list',
+      filters: req.query 
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: products.docs,
+      pagination: {
+        total: products.totalDocs,
+        page: products.page,
+        pages: products.totalPages,
+        limit: products.limit
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get single product
+// @route   GET /api/products/:id
+// @access  Private
+exports.getProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id)
+      .populate('categories', 'name slug image description')
+      .populate('primaryCategory', 'name slug')
+      .populate('createdBy', 'name email')
+      .populate('updatedBy', 'name email');
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+    
+    // Increment view count
+    product.views += 1;
+    await product.save();
+    
+    await auditLog(req, 'PRODUCT_VIEW', 'Product', product._id, {
+      productName: product.productName
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get product by barcode
+// @route   GET /api/products/barcode/:barcode
+// @access  Private
+exports.getProductByBarcode = async (req, res) => {
+  try {
+    const product = await Product.findOne({ 'barcode.number': req.params.barcode })
+      .populate('categories', 'name slug')
+      .populate('primaryCategory', 'name slug');
+    
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found with this barcode'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get products by category
+// @route   GET /api/products/by-category/:categoryId
+// @access  Private
+exports.getProductsByCategory = async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { includeSubcategories = 'true', page = 1, limit = 20 } = req.query;
+    
+    let categoryIds = [categoryId];
+    
+    if (includeSubcategories === 'true') {
+      // Get all subcategory IDs recursively
+      const getSubcategoryIds = async (parentId) => {
+        const subcategories = await Category.find({ parentCategory: parentId });
+        let ids = subcategories.map(cat => cat._id);
+        for (const subcat of subcategories) {
+          const childIds = await getSubcategoryIds(subcat._id);
+          ids = [...ids, ...childIds];
+        }
+        return ids;
+      };
+      
+      const subIds = await getSubcategoryIds(categoryId);
+      categoryIds = [...categoryIds, ...subIds];
+    }
+    
+    const products = await Product.paginate(
+      { 
+        categories: { $in: categoryIds },
+        status: 'active',
+        isPublished: true 
+      },
+      {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        sort: '-createdAt',
+        populate: 'categories primaryCategory'
+      }
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: products.docs,
+      pagination: {
+        total: products.totalDocs,
+        page: products.page,
+        pages: products.totalPages,
+        limit: products.limit
+      }
+    });
+  } catch (error) {
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -437,6 +492,7 @@ exports.updateProduct = async (req, res) => {
     
     // Handle new main image
     if (req.files && req.files.mainImage) {
+      // Delete old image from Cloudinary
       if (product.mainImage && product.mainImage.publicId) {
         await cloudinary.uploader.destroy(product.mainImage.publicId);
       }
@@ -451,8 +507,7 @@ exports.updateProduct = async (req, res) => {
     if (req.files && req.files.gallery) {
       const newGallery = req.files.gallery.map(file => ({
         url: file.path,
-        publicId: file.filename,
-        caption: ''
+        publicId: file.filename
       }));
       updateData.gallery = [...product.gallery, ...newGallery];
     }
@@ -469,12 +524,17 @@ exports.updateProduct = async (req, res) => {
       { new: true, runValidators: true }
     ).populate('categories primaryCategory');
     
+    await auditLog(req, 'PRODUCT_UPDATE', 'Product', product._id, {
+      productName: product.productName,
+      updatedFields: Object.keys(req.body)
+    });
+    
     res.status(200).json({
       success: true,
       data: product
     });
   } catch (error) {
-    console.error('Update product error:', error);
+    await auditLog(req, 'PRODUCT_UPDATE', 'Product', req.params.id, { error: error.message }, 'FAILED');
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -521,14 +581,27 @@ exports.deleteProduct = async (req, res) => {
       await cloudinary.uploader.destroy(`products/qrcodes/${publicId}`);
     }
     
+    // Delete color images
+    for (const color of product.colors) {
+      for (const image of color.images) {
+        if (image.publicId) {
+          await cloudinary.uploader.destroy(image.publicId);
+        }
+      }
+    }
+    
     await product.deleteOne();
+    
+    await auditLog(req, 'PRODUCT_DELETE', 'Product', product._id, {
+      productName: product.productName,
+      deletedBy: req.user.email
+    });
     
     res.status(200).json({
       success: true,
       message: 'Product deleted successfully'
     });
   } catch (error) {
-    console.error('Delete product error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -539,7 +612,7 @@ exports.deleteProduct = async (req, res) => {
 
 // @desc    Update stock
 // @route   PUT /api/products/:id/stock
-// @access  Private (Admin, Manager)
+// @access  Private
 exports.updateStock = async (req, res) => {
   try {
     const { stock, variationId, type = 'set' } = req.body;
@@ -596,13 +669,21 @@ exports.updateStock = async (req, res) => {
     
     await product.save();
     
+    await auditLog(req, 'STOCK_UPDATE', 'Product', product._id, {
+      productName: product.productName,
+      variationId,
+      oldStock,
+      newStock,
+      changeType: type,
+      changeAmount: stock
+    });
+    
     res.status(200).json({
       success: true,
       data: product,
       message: 'Stock updated successfully'
     });
   } catch (error) {
-    console.error('Update stock error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -613,7 +694,7 @@ exports.updateStock = async (req, res) => {
 
 // @desc    Upload product image
 // @route   POST /api/products/:id/images
-// @access  Private (Admin, Manager)
+// @access  Private
 exports.uploadProductImage = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -641,12 +722,16 @@ exports.uploadProductImage = async (req, res) => {
     product.gallery.push(newImage);
     await product.save();
     
+    await auditLog(req, 'IMAGE_UPLOAD', 'Product', product._id, {
+      action: 'uploaded-gallery-image',
+      imageUrl: req.file.path
+    });
+    
     res.status(200).json({
       success: true,
       data: newImage
     });
   } catch (error) {
-    console.error('Upload product image error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -657,7 +742,7 @@ exports.uploadProductImage = async (req, res) => {
 
 // @desc    Delete product image
 // @route   DELETE /api/products/:id/images/:imageId
-// @access  Private (Admin, Manager)
+// @access  Private
 exports.deleteProductImage = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -677,6 +762,7 @@ exports.deleteProductImage = async (req, res) => {
       });
     }
     
+    // Delete from Cloudinary
     if (image.publicId) {
       await cloudinary.uploader.destroy(image.publicId);
     }
@@ -684,12 +770,16 @@ exports.deleteProductImage = async (req, res) => {
     image.remove();
     await product.save();
     
+    await auditLog(req, 'IMAGE_DELETE', 'Product', product._id, {
+      action: 'deleted-gallery-image',
+      imageId: req.params.imageId
+    });
+    
     res.status(200).json({
       success: true,
       message: 'Image deleted successfully'
     });
   } catch (error) {
-    console.error('Delete product image error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -701,47 +791,96 @@ exports.deleteProductImage = async (req, res) => {
 // @desc    Get product statistics
 // @route   GET /api/products/stats/summary
 // @access  Private (Admin, Manager)
-// In productController.js, replace the getProductStats function:
-
-// @desc    Get product statistics
-// @route   GET /api/products/stats/summary
-// @access  Public (change to public or keep admin)
 exports.getProductStats = async (req, res) => {
   try {
-    const totalProducts = await Product.countDocuments();
-    const publishedProducts = await Product.countDocuments({ isPublished: true, status: 'active' });
-    
-    // Fix the lowStockProducts query - don't use $expr with string comparison
-    const allProducts = await Product.find();
-    const lowStockProducts = allProducts.filter(p => 
-      (p.inventory?.currentStock || 0) <= (p.inventory?.lowStockThreshold || 10)
-    ).length;
-    
-    const outOfStockProducts = await Product.countDocuments({ 'inventory.currentStock': 0 });
-    
-    const avgPriceResult = await Product.aggregate([
-      { $group: { _id: null, avgPrice: { $avg: '$price' } } }
+    const stats = await Product.aggregate([
+      {
+        $facet: {
+          totalProducts: [
+            { $count: 'count' }
+          ],
+          publishedProducts: [
+            { $match: { isPublished: true, status: 'active' } },
+            { $count: 'count' }
+          ],
+          lowStockProducts: [
+            { 
+              $match: { 
+                $expr: { 
+                  $lte: ['$inventory.currentStock', '$inventory.lowStockThreshold'] 
+                }
+              }
+            },
+            { $count: 'count' }
+          ],
+          outOfStockProducts: [
+            { $match: { 'inventory.currentStock': 0 } },
+            { $count: 'count' }
+          ],
+          averagePrice: [
+            { $group: { _id: null, avgPrice: { $avg: '$price' } } }
+          ],
+          totalValue: [
+            { 
+              $group: { 
+                _id: null, 
+                totalValue: { 
+                  $sum: { $multiply: ['$price', '$inventory.currentStock'] } 
+                }
+              }
+            }
+          ],
+          topProducts: [
+            { $sort: { sales: -1 } },
+            { $limit: 5 },
+            { 
+              $project: { 
+                productName: 1, 
+                sales: 1, 
+                price: 1,
+                totalRevenue: { $multiply: ['$sales', '$price'] }
+              }
+            }
+          ],
+          categoryDistribution: [
+            { $unwind: '$categories' },
+            { $group: { _id: '$categories', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 10 },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'categoryInfo'
+              }
+            },
+            { $unwind: '$categoryInfo' },
+            { 
+              $project: {
+                categoryName: '$categoryInfo.name',
+                count: 1
+              }
+            }
+          ]
+        }
+      }
     ]);
-    const averagePrice = avgPriceResult[0]?.avgPrice || 0;
-    
-    const topProducts = await Product.find()
-      .sort({ sales: -1 })
-      .limit(5)
-      .select('productName sales price');
     
     res.status(200).json({
       success: true,
       data: {
-        totalProducts,
-        publishedProducts,
-        lowStockProducts,
-        outOfStockProducts,
-        averagePrice,
-        topProducts
+        totalProducts: stats[0].totalProducts[0]?.count || 0,
+        publishedProducts: stats[0].publishedProducts[0]?.count || 0,
+        lowStockProducts: stats[0].lowStockProducts[0]?.count || 0,
+        outOfStockProducts: stats[0].outOfStockProducts[0]?.count || 0,
+        averagePrice: stats[0].averagePrice[0]?.avgPrice || 0,
+        totalInventoryValue: stats[0].totalValue[0]?.totalValue || 0,
+        topProducts: stats[0].topProducts,
+        categoryDistribution: stats[0].categoryDistribution
       }
     });
   } catch (error) {
-    console.error('Get product stats error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error',
@@ -808,13 +947,19 @@ exports.bulkAssignCategories = async (req, res) => {
       updateOperation
     );
     
+    await auditLog(req, 'CATEGORY_ASSIGN', 'Product', null, {
+      productCount: productIds.length,
+      categoryIds,
+      operation,
+      modifiedCount: result.modifiedCount
+    });
+    
     res.status(200).json({
       success: true,
       message: `Categories ${operation}ed successfully to ${result.modifiedCount} products`,
       modifiedCount: result.modifiedCount
     });
   } catch (error) {
-    console.error('Bulk assign categories error:', error);
     res.status(500).json({
       success: false,
       message: 'Server Error',

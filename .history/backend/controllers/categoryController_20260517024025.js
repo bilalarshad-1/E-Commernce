@@ -1,4 +1,3 @@
-// controllers/categoryController.js - Complete Fixed Version
 const Category = require('../models/Category');
 const Product = require('../models/Product');
 const { cloudinary } = require('../config/cloudinary');
@@ -15,6 +14,7 @@ exports.getCategories = async (req, res) => {
     const { hierarchical, status, page = 1, limit = 50 } = req.query;
     
     if (hierarchical === 'true') {
+      // Return hierarchical structure
       const categories = await Category.find({ 
         parentCategory: null,
         status: status || 'active'
@@ -32,6 +32,7 @@ exports.getCategories = async (req, res) => {
       });
     }
     
+    // Regular paginated list
     const filter = {};
     if (status) filter.status = status;
     if (req.query.parentCategory) filter.parentCategory = req.query.parentCategory;
@@ -83,6 +84,7 @@ exports.getCategory = async (req, res) => {
       });
     }
     
+    // Get product count for this category
     const productCount = await Product.countDocuments({ categories: category._id });
     
     res.status(200).json({
@@ -132,7 +134,7 @@ exports.getCategoryBySlug = async (req, res) => {
   }
 };
 
-// @desc    Get category tree
+// @desc    Get category tree (all categories with hierarchy)
 // @route   GET /api/categories/tree
 // @access  Public
 exports.getCategoryTree = async (req, res) => {
@@ -184,6 +186,7 @@ exports.getCategoryProducts = async (req, res) => {
     let categoryIds = [req.params.id];
     
     if (includeSubcategories === 'true') {
+      // Get all subcategory IDs
       const getSubcategoryIds = async (parentId) => {
         const subcategories = await Category.find({ parentCategory: parentId });
         let ids = subcategories.map(cat => cat._id);
@@ -244,21 +247,8 @@ exports.getCategoryProducts = async (req, res) => {
 // @access  Private (Admin, Manager)
 exports.createCategory = async (req, res) => {
   try {
-    // Check if user exists (added by auth middleware)
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
     const categoryData = {
-      name: req.body.name,
-      description: req.body.description,
-      parentCategory: req.body.parentCategory || null,
-      status: req.body.status || 'active',
-      isFeatured: req.body.isFeatured || false,
-      order: req.body.order || 0,
+      ...req.body,
       createdBy: req.user._id,
       updatedBy: req.user._id
     };
@@ -306,13 +296,6 @@ exports.createCategory = async (req, res) => {
 // @access  Private (Admin, Manager)
 exports.updateCategory = async (req, res) => {
   try {
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
     let category = await Category.findById(req.params.id);
     
     if (!category) {
@@ -337,6 +320,7 @@ exports.updateCategory = async (req, res) => {
     
     // Handle new image
     if (req.file) {
+      // Delete old image from Cloudinary
       if (category.image && category.image.publicId) {
         await cloudinary.uploader.destroy(category.image.publicId);
       }
@@ -372,13 +356,6 @@ exports.updateCategory = async (req, res) => {
 // @access  Private (Admin only)
 exports.deleteCategory = async (req, res) => {
   try {
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
     const category = await Category.findById(req.params.id);
     
     if (!category) {
@@ -388,6 +365,7 @@ exports.deleteCategory = async (req, res) => {
       });
     }
     
+    // Check if category has products
     const productCount = await Product.countDocuments({ categories: category._id });
     if (productCount > 0) {
       return res.status(400).json({
@@ -396,6 +374,7 @@ exports.deleteCategory = async (req, res) => {
       });
     }
     
+    // Check for subcategories
     const subcategoryCount = await Category.countDocuments({ parentCategory: category._id });
     if (subcategoryCount > 0) {
       return res.status(400).json({
@@ -404,6 +383,7 @@ exports.deleteCategory = async (req, res) => {
       });
     }
     
+    // Delete image from Cloudinary
     if (category.image && category.image.publicId) {
       await cloudinary.uploader.destroy(category.image.publicId);
     }
@@ -422,4 +402,4 @@ exports.deleteCategory = async (req, res) => {
       error: error.message
     });
   }
-};
+};a

@@ -16,35 +16,16 @@ const { uploadCategoryImage } = require('../config/cloudinary');
 
 const router = express.Router();
 
-// PUBLIC ROUTES (No auth)
+// PUBLIC ROUTES
 router.get('/', getCategories);
 router.get('/tree', getCategoryTree);
 router.get('/slug/:slug', getCategoryBySlug);
 router.get('/:id', getCategory);
 router.get('/:id/products', getCategoryProducts);
 
-// ADMIN ROUTES (With auth) - These must come AFTER public routes
-router.post(
-  '/',
-  protect,
-  authorize('super-admin', 'admin', 'manager'),
-  uploadCategoryImage.single('image'),
-  createCategory
-);
-
-router.put(
-  '/:id',
-  protect,
-  authorize('super-admin', 'admin', 'manager'),
-  uploadCategoryImage.single('image'),
-  updateCategory
-);
-
-router.delete(
-  '/:id',
-  protect,
-  authorize('super-admin', 'admin'),
-  deleteCategory
-);
+// ADMIN ROUTES
+router.post('/', protect, authorize('super-admin', 'admin', 'manager'), uploadCategoryImage.single('image'), createCategory);
+router.put('/:id', protect, authorize('super-admin', 'admin', 'manager'), uploadCategoryImage.single('image'), updateCategory);
+router.delete('/:id', protect, authorize('super-admin', 'admin'), deleteCategory);
 
 module.exports = router;

@@ -701,22 +701,13 @@ exports.deleteProductImage = async (req, res) => {
 // @desc    Get product statistics
 // @route   GET /api/products/stats/summary
 // @access  Private (Admin, Manager)
-// In productController.js, replace the getProductStats function:
-
-// @desc    Get product statistics
-// @route   GET /api/products/stats/summary
-// @access  Public (change to public or keep admin)
 exports.getProductStats = async (req, res) => {
   try {
     const totalProducts = await Product.countDocuments();
     const publishedProducts = await Product.countDocuments({ isPublished: true, status: 'active' });
-    
-    // Fix the lowStockProducts query - don't use $expr with string comparison
-    const allProducts = await Product.find();
-    const lowStockProducts = allProducts.filter(p => 
-      (p.inventory?.currentStock || 0) <= (p.inventory?.lowStockThreshold || 10)
-    ).length;
-    
+    const lowStockProducts = await Product.countDocuments({ 
+      'inventory.currentStock': { $lte: '$inventory.lowStockThreshold' } 
+    });
     const outOfStockProducts = await Product.countDocuments({ 'inventory.currentStock': 0 });
     
     const avgPriceResult = await Product.aggregate([

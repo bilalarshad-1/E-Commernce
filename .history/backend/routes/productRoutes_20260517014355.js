@@ -1,4 +1,4 @@
-// routes/productRoutes.js - FIXED VERSION
+// routes/productRoutes.js
 const express = require('express');
 const {
   getProducts,
@@ -16,7 +16,8 @@ const {
 } = require('../controllers/productController');
 const { protect } = require('../middleware/authMiddleware');
 const { authorize } = require('../middleware/roleMiddleware');
-const { uploadProductImages } = require('../config/cloudinary');
+const { uploadProductImage: uploadImage } = require('../config/cloudinary');
+const multer = require('multer');
 
 const router = express.Router();
 
@@ -27,35 +28,17 @@ router.get('/barcode/:barcode', getProductByBarcode);
 router.get('/by-category/:categoryId', getProductsByCategory);
 router.get('/:id', getProduct);
 
-// ADMIN ROUTES - Use Cloudinary storage
-router.post(
-  '/', 
-  protect, 
-  authorize('super-admin', 'admin', 'manager'), 
-  uploadProductImages,  // Use Cloudinary multer configuration
-  createProduct
-);
+// ADMIN ROUTES
+const cpUpload = multer().fields([
+  { name: 'mainImage', maxCount: 1 },
+  { name: 'gallery', maxCount: 10 }
+]);
 
-router.put(
-  '/:id', 
-  protect, 
-  authorize('super-admin', 'admin', 'manager'), 
-  uploadProductImages,
-  updateProduct
-);
-
+router.post('/', protect, authorize('super-admin', 'admin', 'manager'), cpUpload, createProduct);
+router.put('/:id', protect, authorize('super-admin', 'admin', 'manager'), cpUpload, updateProduct);
 router.delete('/:id', protect, authorize('super-admin', 'admin'), deleteProduct);
 router.put('/:id/stock', protect, authorize('super-admin', 'admin', 'manager'), updateStock);
-
-// Single image upload for gallery
-router.post(
-  '/:id/images', 
-  protect, 
-  authorize('super-admin', 'admin', 'manager'), 
-  require('../config/cloudinary').uploadProductImage.single('image'), 
-  uploadProductImage
-);
-
+router.post('/:id/images', protect, authorize('super-admin', 'admin', 'manager'), uploadImage.single('image'), uploadProductImage);
 router.delete('/:id/images/:imageId', protect, authorize('super-admin', 'admin', 'manager'), deleteProductImage);
 router.post('/bulk/categories', protect, authorize('super-admin', 'admin', 'manager'), bulkAssignCategories);
 
