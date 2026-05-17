@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination, Navigation, EffectFade } from 'swiper/modules';
 import { motion } from 'framer-motion';
-import { heroService } from '../services/heroApi';
+import { heroService } from '../../../adminpanel/src/services/heroApi';
 import 'swiper/css';
 import 'swiper/css/pagination';
 import 'swiper/css/navigation';
