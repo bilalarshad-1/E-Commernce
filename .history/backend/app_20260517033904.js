@@ -19,7 +19,7 @@ const customerRoutes = require('./routes/customerRoutes');
 const adminCustomerRoutes = require('./routes/adminCustomerRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const newsletterRoutes = require('./routes/newsletterRoutes');
-
+app.use('/api/newsletter', newsletterRoutes);
 
 const app = express();
 
@@ -39,7 +39,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/admin/customers', adminCustomerRoutes)
 app.use('/api/orders', orderRoutes);
-app.use('/api/newsletter', newsletterRoutes);
+
 
 
 // Error handler for 404

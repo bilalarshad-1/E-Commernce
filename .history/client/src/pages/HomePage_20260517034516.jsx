@@ -1,4 +1,4 @@
-// src/pages/HomePage.jsx - ULTRA PREMIUM WORKING VERSION
+// src/pages/HomePage.jsx - ULTRA PREMIUM COMPLETE VERSION
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -7,6 +7,7 @@ import { Swiper, SwiperSlide } from 'swiper/react';
 import { Autoplay, Pagination, Navigation, EffectFade } from 'swiper/modules';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { useInView } from 'react-intersection-observer';
+import CountUp from 'react-countup';
 import toast from 'react-hot-toast';
 import { 
   FiTruck, 
@@ -19,6 +20,7 @@ import {
   FiUser,
   FiAward,
   FiPackage,
+  FiClock,
   FiMapPin,
   FiMail,
   FiSend,
@@ -59,10 +61,10 @@ const ProductCard = ({ product }) => {
             </div>
           )}
           <button 
-            className="absolute top-4 right-4 w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-md hover:bg-red-50 transition-colors z-10"
+            className="absolute top-4 right-4 w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-md hover:bg-red-50 transition-colors"
             onClick={(e) => {
               e.preventDefault();
-              e.stopPropagation();
+              // Add to wishlist logic
             }}
           >
             <FiHeart className="text-gray-600 hover:text-red-500" />
@@ -71,13 +73,13 @@ const ProductCard = ({ product }) => {
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="absolute bottom-4 left-4 right-4 z-10"
+              className="absolute bottom-4 left-4 right-4"
             >
               <button 
                 className="w-full bg-indigo-600 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-colors"
                 onClick={(e) => {
                   e.preventDefault();
-                  e.stopPropagation();
+                  // Add to cart logic
                 }}
               >
                 <FiShoppingCart /> Add to Cart
@@ -99,6 +101,9 @@ const ProductCard = ({ product }) => {
           <div className="flex items-center justify-between">
             <div>
               <span className="text-2xl font-bold text-indigo-600">${product.price}</span>
+              {product.oldPrice && (
+                <span className="text-gray-400 line-through text-sm ml-2">${product.oldPrice}</span>
+              )}
             </div>
             <div className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
               In Stock
@@ -110,28 +115,9 @@ const ProductCard = ({ product }) => {
   );
 };
 
-// Simple Stat Card Component (No CountUp to avoid errors)
+// Stat Card Component
 const StatCard = ({ number, suffix, label, icon: Icon }) => {
   const [ref, inView] = useInView({ triggerOnce: true, threshold: 0.5 });
-  const [count, setCount] = useState(0);
-  
-  useEffect(() => {
-    if (inView) {
-      let start = 0;
-      const duration = 2000;
-      const increment = number / (duration / 16);
-      const timer = setInterval(() => {
-        start += increment;
-        if (start >= number) {
-          setCount(number);
-          clearInterval(timer);
-        } else {
-          setCount(Math.floor(start));
-        }
-      }, 16);
-      return () => clearInterval(timer);
-    }
-  }, [inView, number]);
   
   return (
     <motion.div
@@ -142,7 +128,7 @@ const StatCard = ({ number, suffix, label, icon: Icon }) => {
       className="text-center"
     >
       <div className="text-4xl md:text-5xl font-bold text-white mb-2">
-        {count}{suffix}
+        {inView ? <CountUp end={number} duration={2.5} /> : 0}{suffix}
       </div>
       <div className="flex items-center justify-center gap-2 text-indigo-200">
         <Icon className="w-5 h-5" />
@@ -164,7 +150,7 @@ const HomePage = () => {
   const { scrollYProgress } = useScroll();
   const heroOpacity = useTransform(scrollYProgress, [0, 0.3], [1, 0]);
   
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+  const API_URL = import.meta.env.VITE_API_URL;
 
   useEffect(() => {
     fetchAllData();
@@ -175,14 +161,14 @@ const HomePage = () => {
     setLoading(true);
     try {
       const [featuredRes, newRes, categoriesRes] = await Promise.all([
-        axios.get(`${API_URL}/products`, { params: { isFeatured: true, limit: 8 } }),
-        axios.get(`${API_URL}/products`, { params: { sort: '-createdAt', limit: 8 } }),
+        axios.get(`${API_URL}/products`, { params: { isFeatured: true, limit: 12 } }),
+        axios.get(`${API_URL}/products`, { params: { sort: '-createdAt', limit: 12 } }),
         axios.get(`${API_URL}/categories`, { params: { status: 'active', limit: 12 } })
       ]);
       
-      setFeaturedProducts(featuredRes.data?.data || []);
-      setNewArrivals(newRes.data?.data || []);
-      setCategories(categoriesRes.data?.data || []);
+      setFeaturedProducts(featuredRes.data.data || []);
+      setNewArrivals(newRes.data.data || []);
+      setCategories(categoriesRes.data.data || []);
     } catch (error) {
       console.error('Fetch data error:', error);
     } finally {
@@ -517,9 +503,9 @@ const HomePage = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {[
-                { name: "Sarah Johnson", role: "Fashion Blogger", rating: 5, text: "Absolutely love the quality! Best shopping experience ever.", image: "https://randomuser.me/api/portraits/women/1.jpg" },
-                { name: "Michael Chen", role: "Tech Enthusiast", rating: 5, text: "Great variety of products and excellent customer service!", image: "https://randomuser.me/api/portraits/men/2.jpg" },
-                { name: "Emma Williams", role: "Fashion Designer", rating: 5, text: "The quality exceeded my expectations. Highly recommended!", image: "https://randomuser.me/api/portraits/women/3.jpg" }
+                { name: "Sarah Johnson", role: "Fashion Blogger", rating: 5, text: "Absolutely love the quality! Best shopping experience ever. The products are premium and shipping was super fast.", image: "https://randomuser.me/api/portraits/women/1.jpg" },
+                { name: "Michael Chen", role: "Tech Enthusiast", rating: 5, text: "Great variety of products and excellent customer service. Will definitely shop again. Highly recommended!", image: "https://randomuser.me/api/portraits/men/2.jpg" },
+                { name: "Emma Williams", role: "Fashion Designer", rating: 5, text: "The quality exceeded my expectations. The packaging was beautiful and delivery was on time. 5 stars!", image: "https://randomuser.me/api/portraits/women/3.jpg" }
               ].map((testimonial, index) => (
                 <motion.div
                   key={index}

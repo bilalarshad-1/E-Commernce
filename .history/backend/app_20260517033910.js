@@ -39,7 +39,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/admin/customers', adminCustomerRoutes)
 app.use('/api/orders', orderRoutes);
-app.use('/api/newsletter', newsletterRoutes);
+
 
 
 // Error handler for 404
