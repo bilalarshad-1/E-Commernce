@@ -20,7 +20,8 @@ const adminCustomerRoutes = require('./routes/adminCustomerRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const newsletterRoutes = require('./routes/newsletterRoutes');
 const heroRoutes = require('./routes/heroRoutes');
-
+app.use('/api/hero', heroRoutes);
+app.use('/api/admin/hero', heroRoutes); // Admin routes
 
 const app = express();
 
@@ -41,8 +42,7 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/admin/customers', adminCustomerRoutes)
 app.use('/api/orders', orderRoutes);
 app.use('/api/newsletter', newsletterRoutes);
-app.use('/api/hero', heroRoutes);
-app.use('/api/admin/hero', heroRoutes); // Admin routes
+
 
 // Error handler for 404
 app.use((req, res) => {

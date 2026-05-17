@@ -1,212 +1,45 @@
-import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "./context/AuthContext";
-import Layout from "./components/Layout/Layout";
-import Login from "./components/Login";
-import Dashboard from "./components/Dashboard";
-import Users from "./components/Users";
-import AuditLogs from "./components/AuditLogs";
-import ProductsList from "./components/pages/Products/ProductsList";
-import ProductForm from "./components/pages/Products/ProductForm";
-import ProductDetail from "./components/pages/Products/ProductDetail";
-import CategoriesList from "./components/Categories/CategoriesList";
-import CategoryForm from "./components/Categories/CategoryForm";
-import CategoryDetail from "./components/Categories/CategoryDetail";
-import PrivateRoute from "./components/PrivateRoute";
-
-// Customer Management Components
-import CustomersList from "./components/pages/customers/CustomersList";
-import CustomerEdit from "./components/pages/customers/CustomerEdit";
-import CustomerDetail from "./components/pages/customers/CustomerDetail";
-
-// Orders
-import OrdersList from "./components/pages/orders/OrdersList";
-import OrderDetail from "./components/pages/orders/OrderDetail";
-
-// Placeholder components
-const Analytics = () => <div className="card">Analytics Page</div>;
-const Settings = () => <div className="card">Settings Page</div>;
-const Profile = () => <div className="card">Profile Page</div>;
+// ============================================
+// src/App.jsx
+// ============================================
+import React from 'react';
+import { Routes, Route } from 'react-router-dom';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
+import HomePage from './pages/HomePage';
+import ShopPage from './pages/ShopPage';
+import ProductDetailPage from './pages/ProductDetailPage';
+import CartPage from './pages/CartPage';
+import CheckoutPage from './pages/CheckoutPage';
+import WishlistPage from './pages/WishlistPage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+import ProfilePage from './pages/ProfilePage';
+import OrdersPage from './pages/OrdersPage';
+import OrderDetailPage from './pages/OrderDetailPage';
+import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
   return (
-    <AuthProvider>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-
-        <Route element={<Layout />}>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
-          {/* Dashboard */}
-          <Route
-            path="/dashboard"
-            element={
-              <PrivateRoute>
-                <Dashboard />
-              </PrivateRoute>
-            }
-          />
-
-          {/* User Management */}
-          <Route
-            path="/users"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <Users />
-              </PrivateRoute>
-            }
-          />
-
-          {/* Customer Management */}
-          <Route
-            path="/customers"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <CustomersList />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/customers/:id"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <CustomerDetail />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/customers/edit/:id"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <CustomerEdit />
-              </PrivateRoute>
-            }
-          />
-
-          {/* Audit Logs */}
-          <Route
-            path="/audit-logs"
-            element={
-              <PrivateRoute roles={["super-admin", "admin"]}>
-                <AuditLogs />
-              </PrivateRoute>
-            }
-          />
-
-          {/* Product Management */}
-          <Route
-            path="/products"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <ProductsList />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/products/create"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <ProductForm />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/products/:id"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <ProductDetail />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/products/edit/:id"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <ProductForm />
-              </PrivateRoute>
-            }
-          />
-
-          {/* Category Management */}
-          <Route
-            path="/categories"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <CategoriesList />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/categories/create"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <CategoryForm />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/categories/:id"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <CategoryDetail />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/categories/edit/:id"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <CategoryForm />
-              </PrivateRoute>
-            }
-          />
-
-          {/* Analytics & Settings */}
-          <Route
-            path="/analytics"
-            element={
-              <PrivateRoute roles={["super-admin", "admin"]}>
-                <Analytics />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <PrivateRoute roles={["super-admin", "admin"]}>
-                <Settings />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/profile"
-            element={
-              <PrivateRoute>
-                <Profile />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/admin/orders"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <OrdersList />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/admin/orders/:id"
-            element={
-              <PrivateRoute roles={["super-admin", "admin", "manager"]}>
-                <OrderDetail />
-              </PrivateRoute>
-            }
-          />
-        </Route>
-      </Routes>
-    </AuthProvider>
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      <Navbar />
+      <main className="flex-grow">
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/shop" element={<ShopPage />} />
+          <Route path="/product/:id" element={<ProductDetailPage />} />
+          <Route path="/cart" element={<CartPage />} />
+          <Route path="/checkout" element={<CheckoutPage />} />
+          <Route path="/wishlist" element={<WishlistPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+          <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+          <Route path="/order/:id" element={<ProtectedRoute><OrderDetailPage /></ProtectedRoute>} />
+        </Routes>
+      </main>
+      <Footer />
+    </div>
   );
-  1;
 }
 
 export default App;

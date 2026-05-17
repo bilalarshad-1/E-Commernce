@@ -130,7 +130,5 @@ module.exports = {
   uploadColorImage,
   uploadCategoryImage,
   uploadProfileImage,
-  uploadProductImages,  
-  uploadHeroImage,
-  // This is the key export for multiple files
+  uploadProductImages,  // This is the key export for multiple files
 };
