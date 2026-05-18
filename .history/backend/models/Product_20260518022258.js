@@ -78,59 +78,49 @@ productSchema.virtual('profitMargin').get(function() {
   return 0;
 });
 
-// ========== FIXED PRE-SAVE MIDDLEWARE ==========
 productSchema.pre('save', async function(next) {
-  
-  // 1. Generate slug from product name
   if (this.isModified('productName')) {
-    this.slug = this.productName
-      .toLowerCase()
-      .replace(/[^a-zA-Z0-9]/g, '-')
-      .replace(/-+/g, '-');
+    this.slug = this.productName.toLowerCase().replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-');
   }
   
-  // 2. Extract YouTube video ID (fixed regex with better format support)
   if (this.isModified('youtubeVideoUrl') && this.youtubeVideoUrl) {
-    const match = this.youtubeVideoUrl.match(
-      /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([^?&/]+)/
-    );
+    const match = this.youtubeVideoUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&]+)/);
     this.youtubeVideoId = match ? match[1] : null;
   }
   
-  // 3. Update category names when categories change
   if (this.isModified('categories') && this.categories.length > 0) {
     const Category = mongoose.model('Category');
     const categories = await Category.find({ _id: { $in: this.categories } });
     this.categoryNames = categories.map(cat => cat.name.toLowerCase());
   }
   
-  // 4. Handle QR code (FIXES THE CRASH)
+  // Generate QR data if not present
+  if (this._id) {
   const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-  
-  // Fix old malformed string data (was stored as JSON string instead of object)
+
+  // Fix old malformed string data
   if (typeof this.qrCode === 'string') {
     try {
       this.qrCode = JSON.parse(this.qrCode);
     } catch (err) {
-      // If parsing fails, start fresh
       this.qrCode = {};
     }
   }
-  
-  // Ensure qrCode exists as an object
+
+  // Ensure qrCode exists as object
   if (!this.qrCode || typeof this.qrCode !== 'object') {
     this.qrCode = {};
   }
-  
-  // Set QR data only if missing (preserves existing data)
+
+  // Set QR data
   if (!this.qrCode.data) {
     this.qrCode.data = `${baseUrl}/products/${this._id}`;
   }
+}
   
   next();
 });
 
-// ========== INDEXES ==========
 productSchema.index({ price: 1, createdAt: -1 });
 productSchema.index({ status: 1, isPublished: 1 });
 productSchema.index({ tags: 1 });
@@ -138,8 +128,6 @@ productSchema.index({ categories: 1, primaryCategory: 1 });
 productSchema.index({ categoryNames: 1 });
 productSchema.index({ productName: 'text', shortDescription: 'text', 'barcode.number': 'text' });
 
-// ========== PLUGINS ==========
 productSchema.plugin(mongoosePaginate);
 
-// ========== EXPORT ==========
 module.exports = mongoose.model('Product', productSchema);
