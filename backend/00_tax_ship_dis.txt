@@ -1,0 +1,2245 @@
+
+I'll create the complete coupon, shipping, and tax setting controllers, routes, and update the app.js.
+
+## Coupon Controller (controllers/couponController.js)
+
+```javascript
+const Coupon = require('../models/Coupon');
+const AuditLog = require('../models/AuditLog');
+const moment = require('moment');
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+// Generate unique coupon code
+const generateCouponCode = (prefix = 'COUPON') => {
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `${prefix}-${timestamp}${random}`;
+};
+
+// Create audit log
+const createAuditLog = async (userId, action, entity, entityId, details, status = 'SUCCESS', req = null) => {
+  try {
+    await AuditLog.create({
+      user: userId,
+      action,
+      entity,
+      entityId,
+      details,
+      status,
+      ipAddress: req?.ip || req?.connection?.remoteAddress,
+      userAgent: req?.headers?.['user-agent']
+    });
+  } catch (error) {
+    console.error('Audit log error:', error);
+  }
+};
+
+// ============================================
+// PUBLIC ROUTES
+// ============================================
+
+// @desc    Validate coupon
+// @route   POST /api/coupons/validate
+// @access  Public
+exports.validateCoupon = async (req, res) => {
+  try {
+    const { code, subtotal, userId } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Coupon code is required'
+      });
+    }
+    
+    const coupon = await Coupon.findOne({ 
+      code: code.toUpperCase(),
+      isActive: true
+    });
+    
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invalid coupon code'
+      });
+    }
+    
+    const validation = await coupon.isValid(userId, subtotal);
+    
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: validation.message
+      });
+    }
+    
+    const discount = coupon.calculateDiscount(subtotal);
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        code: coupon.code,
+        name: coupon.name,
+        description: coupon.description,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountValue,
+        discountAmount: discount,
+        freeShipping: coupon.freeShipping,
+        minPurchase: coupon.minPurchase
+      },
+      message: validation.message
+    });
+    
+  } catch (error) {
+    console.error('Validate coupon error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get available coupons for user
+// @route   GET /api/coupons/available
+// @access  Private
+exports.getAvailableCoupons = async (req, res) => {
+  try {
+    const now = new Date();
+    const userId = req.user?._id;
+    
+    const coupons = await Coupon.find({
+      isActive: true,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+      usageLimit: { $gt: '$usedCount' }
+    });
+    
+    // Filter coupons that are valid for the user
+    const availableCoupons = [];
+    for (const coupon of coupons) {
+      const validation = await coupon.isValid(userId);
+      if (validation.valid) {
+        availableCoupons.push({
+          _id: coupon._id,
+          code: coupon.code,
+          name: coupon.name,
+          description: coupon.description,
+          discountType: coupon.discountType,
+          discountValue: coupon.discountValue,
+          minPurchase: coupon.minPurchase,
+          freeShipping: coupon.freeShipping,
+          endDate: coupon.endDate
+        });
+      }
+    }
+    
+    res.status(200).json({
+      success: true,
+      count: availableCoupons.length,
+      data: availableCoupons
+    });
+    
+  } catch (error) {
+    console.error('Get available coupons error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// ============================================
+// ADMIN ROUTES
+// ============================================
+
+// @desc    Create coupon
+// @route   POST /api/coupons
+// @access  Private/Admin
+exports.createCoupon = async (req, res) => {
+  try {
+    const {
+      code,
+      name,
+      description,
+      discountType,
+      discountValue,
+      maxDiscountAmount,
+      minPurchase,
+      usageLimit,
+      perUserLimit,
+      startDate,
+      endDate,
+      applicableProducts,
+      applicableCategories,
+      excludeProducts,
+      eligibleCustomers,
+      newCustomersOnly,
+      freeShipping,
+      firstOrderOnly,
+      stackable
+    } = req.body;
+    
+    // Check if coupon code already exists
+    let couponCode = code;
+    if (!couponCode) {
+      couponCode = generateCouponCode();
+    } else {
+      const existingCoupon = await Coupon.findOne({ code: couponCode.toUpperCase() });
+      if (existingCoupon) {
+        return res.status(400).json({
+          success: false,
+          message: 'Coupon code already exists'
+        });
+      }
+    }
+    
+    const coupon = await Coupon.create({
+      code: couponCode.toUpperCase(),
+      name,
+      description,
+      discountType,
+      discountValue,
+      maxDiscountAmount: maxDiscountAmount || 0,
+      minPurchase: minPurchase || 0,
+      usageLimit: usageLimit || 1,
+      perUserLimit: perUserLimit || 1,
+      startDate: startDate || new Date(),
+      endDate,
+      applicableProducts: applicableProducts || [],
+      applicableCategories: applicableCategories || [],
+      excludeProducts: excludeProducts || [],
+      eligibleCustomers: eligibleCustomers || [],
+      newCustomersOnly: newCustomersOnly || false,
+      freeShipping: freeShipping || false,
+      firstOrderOnly: firstOrderOnly || false,
+      stackable: stackable || false,
+      createdBy: req.user._id,
+      isActive: true
+    });
+    
+    await createAuditLog(
+      req.user._id,
+      'CREATE',
+      'Coupon',
+      coupon._id,
+      {
+        code: coupon.code,
+        name: coupon.name,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountValue
+      },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(201).json({
+      success: true,
+      data: coupon,
+      message: 'Coupon created successfully'
+    });
+    
+  } catch (error) {
+    console.error('Create coupon error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get all coupons
+// @route   GET /api/coupons
+// @access  Private/Admin
+exports.getAllCoupons = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const sort = req.query.sort || '-createdAt';
+    
+    const filter = {};
+    if (req.query.isActive !== undefined) {
+      filter.isActive = req.query.isActive === 'true';
+    }
+    if (req.query.search) {
+      filter.$or = [
+        { code: { $regex: req.query.search, $options: 'i' } },
+        { name: { $regex: req.query.search, $options: 'i' } }
+      ];
+    }
+    
+    const coupons = await Coupon.find(filter)
+      .sort(sort)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('createdBy', 'name email')
+      .populate('eligibleCustomers', 'name email');
+    
+    const total = await Coupon.countDocuments(filter);
+    
+    res.status(200).json({
+      success: true,
+      data: coupons,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get all coupons error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get single coupon
+// @route   GET /api/coupons/:id
+// @access  Private/Admin
+exports.getCoupon = async (req, res) => {
+  try {
+    const coupon = await Coupon.findById(req.params.id)
+      .populate('createdBy', 'name email')
+      .populate('eligibleCustomers', 'name email')
+      .populate('applicableProducts', 'productName price')
+      .populate('applicableCategories', 'name')
+      .populate('excludeProducts', 'productName price');
+    
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: 'Coupon not found'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: coupon
+    });
+    
+  } catch (error) {
+    console.error('Get coupon error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update coupon
+// @route   PUT /api/coupons/:id
+// @access  Private/Admin
+exports.updateCoupon = async (req, res) => {
+  try {
+    const coupon = await Coupon.findById(req.params.id);
+    
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: 'Coupon not found'
+      });
+    }
+    
+    const oldData = {
+      code: coupon.code,
+      discountType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      isActive: coupon.isActive
+    };
+    
+    const updates = req.body;
+    
+    // If code is being updated, check for duplicates
+    if (updates.code && updates.code !== coupon.code) {
+      const existingCoupon = await Coupon.findOne({ code: updates.code.toUpperCase() });
+      if (existingCoupon) {
+        return res.status(400).json({
+          success: false,
+          message: 'Coupon code already exists'
+        });
+      }
+      updates.code = updates.code.toUpperCase();
+    }
+    
+    Object.assign(coupon, updates);
+    await coupon.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'Coupon',
+      coupon._id,
+      {
+        old: oldData,
+        new: {
+          code: coupon.code,
+          discountType: coupon.discountType,
+          discountValue: coupon.discountValue,
+          isActive: coupon.isActive
+        }
+      },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: coupon,
+      message: 'Coupon updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('Update coupon error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Delete coupon
+// @route   DELETE /api/coupons/:id
+// @access  Private/Admin
+exports.deleteCoupon = async (req, res) => {
+  try {
+    const coupon = await Coupon.findById(req.params.id);
+    
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: 'Coupon not found'
+      });
+    }
+    
+    await coupon.deleteOne();
+    
+    await createAuditLog(
+      req.user._id,
+      'DELETE',
+      'Coupon',
+      coupon._id,
+      {
+        code: coupon.code,
+        name: coupon.name
+      },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      message: 'Coupon deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('Delete coupon error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Toggle coupon status
+// @route   PUT /api/coupons/:id/toggle-status
+// @access  Private/Admin
+exports.toggleCouponStatus = async (req, res) => {
+  try {
+    const coupon = await Coupon.findById(req.params.id);
+    
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: 'Coupon not found'
+      });
+    }
+    
+    coupon.isActive = !coupon.isActive;
+    await coupon.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'Coupon',
+      coupon._id,
+      {
+        action: 'toggle_status',
+        isActive: coupon.isActive
+      },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: coupon,
+      message: `Coupon ${coupon.isActive ? 'activated' : 'deactivated'} successfully`
+    });
+    
+  } catch (error) {
+    console.error('Toggle coupon status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get coupon statistics
+// @route   GET /api/coupons/stats/summary
+// @access  Private/Admin
+exports.getCouponStats = async (req, res) => {
+  try {
+    const totalCoupons = await Coupon.countDocuments();
+    const activeCoupons = await Coupon.countDocuments({ isActive: true });
+    const expiredCoupons = await Coupon.countDocuments({ 
+      endDate: { $lt: new Date() },
+      isActive: true
+    });
+    
+    const totalDiscountGiven = await Coupon.aggregate([
+      { $unwind: '$usedBy' },
+      {
+        $group: {
+          _id: null,
+          totalDiscount: { $sum: '$usedBy.discountAmount' }
+        }
+      }
+    ]);
+    
+    const mostUsedCoupons = await Coupon.find()
+      .sort({ usedCount: -1 })
+      .limit(5)
+      .select('code name usedCount discountValue discountType');
+    
+    const usageByDay = await Coupon.aggregate([
+      { $unwind: '$usedBy' },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$usedBy.usedAt' } },
+          count: { $sum: 1 },
+          totalDiscount: { $sum: '$usedBy.discountAmount' }
+        }
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 30 }
+    ]);
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        totalCoupons,
+        activeCoupons,
+        expiredCoupons,
+        totalDiscountGiven: totalDiscountGiven[0]?.totalDiscount || 0,
+        mostUsedCoupons,
+        usageByDay
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get coupon stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+```
+
+## Shipping Setting Controller (controllers/shippingController.js)
+
+```javascript
+const ShippingSetting = require('../models/ShippingSetting');
+const AuditLog = require('../models/AuditLog');
+
+// Create audit log
+const createAuditLog = async (userId, action, entity, entityId, details, status = 'SUCCESS', req = null) => {
+  try {
+    await AuditLog.create({
+      user: userId,
+      action,
+      entity,
+      entityId,
+      details,
+      status,
+      ipAddress: req?.ip || req?.connection?.remoteAddress,
+      userAgent: req?.headers?.['user-agent']
+    });
+  } catch (error) {
+    console.error('Audit log error:', error);
+  }
+};
+
+// @desc    Get shipping settings
+// @route   GET /api/shipping/settings
+// @access  Public
+exports.getShippingSettings = async (req, res) => {
+  try {
+    let settings = await ShippingSetting.findOne();
+    
+    if (!settings) {
+      // Return default settings
+      settings = {
+        methods: [
+          { name: 'standard', displayName: 'Standard Shipping', cost: 10, minDays: 3, maxDays: 7, isActive: true, freeShippingThreshold: 100 },
+          { name: 'express', displayName: 'Express Shipping', cost: 25, minDays: 1, maxDays: 3, isActive: true, freeShippingThreshold: 0 },
+          { name: 'overnight', displayName: 'Overnight Shipping', cost: 50, minDays: 1, maxDays: 1, isActive: true, freeShippingThreshold: 0 }
+        ],
+        shippingZones: [],
+        defaultShippingMethod: 'standard'
+      };
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: settings
+    });
+    
+  } catch (error) {
+    console.error('Get shipping settings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update shipping settings
+// @route   PUT /api/shipping/settings
+// @access  Private/Admin
+exports.updateShippingSettings = async (req, res) => {
+  try {
+    const { methods, shippingZones, defaultShippingMethod } = req.body;
+    
+    let settings = await ShippingSetting.findOne();
+    
+    if (!settings) {
+      settings = new ShippingSetting();
+    }
+    
+    if (methods) settings.methods = methods;
+    if (shippingZones) settings.shippingZones = shippingZones;
+    if (defaultShippingMethod) settings.defaultShippingMethod = defaultShippingMethod;
+    
+    settings.updatedBy = req.user._id;
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'ShippingSetting',
+      settings._id,
+      {
+        methodsCount: methods?.length,
+        shippingZonesCount: shippingZones?.length,
+        defaultShippingMethod
+      },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: settings,
+      message: 'Shipping settings updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('Update shipping settings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Add shipping method
+// @route   POST /api/shipping/methods
+// @access  Private/Admin
+exports.addShippingMethod = async (req, res) => {
+  try {
+    const { name, displayName, description, cost, minDays, maxDays, freeShippingThreshold } = req.body;
+    
+    let settings = await ShippingSetting.findOne();
+    if (!settings) {
+      settings = new ShippingSetting();
+    }
+    
+    const newMethod = {
+      name,
+      displayName,
+      description,
+      cost,
+      minDays,
+      maxDays,
+      isActive: true,
+      freeShippingThreshold: freeShippingThreshold || 0
+    };
+    
+    settings.methods.push(newMethod);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'CREATE',
+      'ShippingMethod',
+      null,
+      { method: newMethod },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(201).json({
+      success: true,
+      data: newMethod,
+      message: 'Shipping method added successfully'
+    });
+    
+  } catch (error) {
+    console.error('Add shipping method error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update shipping method
+// @route   PUT /api/shipping/methods/:methodName
+// @access  Private/Admin
+exports.updateShippingMethod = async (req, res) => {
+  try {
+    const { methodName } = req.params;
+    const updates = req.body;
+    
+    const settings = await ShippingSetting.findOne();
+    if (!settings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping settings not found'
+      });
+    }
+    
+    const methodIndex = settings.methods.findIndex(m => m.name === methodName);
+    if (methodIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping method not found'
+      });
+    }
+    
+    Object.assign(settings.methods[methodIndex], updates);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'ShippingMethod',
+      null,
+      { methodName, updates },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: settings.methods[methodIndex],
+      message: 'Shipping method updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('Update shipping method error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Delete shipping method
+// @route   DELETE /api/shipping/methods/:methodName
+// @access  Private/Admin
+exports.deleteShippingMethod = async (req, res) => {
+  try {
+    const { methodName } = req.params;
+    
+    const settings = await ShippingSetting.findOne();
+    if (!settings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping settings not found'
+      });
+    }
+    
+    const methodIndex = settings.methods.findIndex(m => m.name === methodName);
+    if (methodIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping method not found'
+      });
+    }
+    
+    const deletedMethod = settings.methods[methodIndex];
+    settings.methods.splice(methodIndex, 1);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'DELETE',
+      'ShippingMethod',
+      null,
+      { deletedMethod },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      message: 'Shipping method deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('Delete shipping method error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Add shipping zone
+// @route   POST /api/shipping/zones
+// @access  Private/Admin
+exports.addShippingZone = async (req, res) => {
+  try {
+    const { name, countries, cost, freeShippingThreshold } = req.body;
+    
+    let settings = await ShippingSetting.findOne();
+    if (!settings) {
+      settings = new ShippingSetting();
+    }
+    
+    const newZone = {
+      name,
+      countries,
+      cost,
+      freeShippingThreshold: freeShippingThreshold || 0
+    };
+    
+    settings.shippingZones.push(newZone);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'CREATE',
+      'ShippingZone',
+      null,
+      { zone: newZone },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(201).json({
+      success: true,
+      data: newZone,
+      message: 'Shipping zone added successfully'
+    });
+    
+  } catch (error) {
+    console.error('Add shipping zone error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update shipping zone
+// @route   PUT /api/shipping/zones/:zoneName
+// @access  Private/Admin
+exports.updateShippingZone = async (req, res) => {
+  try {
+    const { zoneName } = req.params;
+    const updates = req.body;
+    
+    const settings = await ShippingSetting.findOne();
+    if (!settings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping settings not found'
+      });
+    }
+    
+    const zoneIndex = settings.shippingZones.findIndex(z => z.name === zoneName);
+    if (zoneIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping zone not found'
+      });
+    }
+    
+    Object.assign(settings.shippingZones[zoneIndex], updates);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'ShippingZone',
+      null,
+      { zoneName, updates },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: settings.shippingZones[zoneIndex],
+      message: 'Shipping zone updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('Update shipping zone error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Delete shipping zone
+// @route   DELETE /api/shipping/zones/:zoneName
+// @access  Private/Admin
+exports.deleteShippingZone = async (req, res) => {
+  try {
+    const { zoneName } = req.params;
+    
+    const settings = await ShippingSetting.findOne();
+    if (!settings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping settings not found'
+      });
+    }
+    
+    const zoneIndex = settings.shippingZones.findIndex(z => z.name === zoneName);
+    if (zoneIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shipping zone not found'
+      });
+    }
+    
+    const deletedZone = settings.shippingZones[zoneIndex];
+    settings.shippingZones.splice(zoneIndex, 1);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'DELETE',
+      'ShippingZone',
+      null,
+      { deletedZone },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      message: 'Shipping zone deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('Delete shipping zone error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Calculate shipping cost
+// @route   POST /api/shipping/calculate
+// @access  Public
+exports.calculateShippingCost = async (req, res) => {
+  try {
+    const { subtotal, shippingMethod, country } = req.body;
+    
+    const settings = await ShippingSetting.findOne();
+    if (!settings) {
+      // Return default calculation
+      const cost = subtotal > 100 ? 0 : 10;
+      return res.status(200).json({
+        success: true,
+        data: { cost, method: 'standard', displayName: 'Standard Shipping' }
+      });
+    }
+    
+    let selectedMethod = settings.methods.find(m => m.name === (shippingMethod || settings.defaultShippingMethod));
+    
+    if (!selectedMethod) {
+      selectedMethod = settings.methods.find(m => m.name === 'standard');
+    }
+    
+    // Check for free shipping threshold
+    if (selectedMethod.freeShippingThreshold > 0 && subtotal >= selectedMethod.freeShippingThreshold) {
+      return res.status(200).json({
+        success: true,
+        data: { cost: 0, method: selectedMethod.name, displayName: selectedMethod.displayName }
+      });
+    }
+    
+    // Check shipping zones
+    if (country && settings.shippingZones.length > 0) {
+      const zone = settings.shippingZones.find(z => z.countries.includes(country));
+      if (zone) {
+        if (zone.freeShippingThreshold > 0 && subtotal >= zone.freeShippingThreshold) {
+          return res.status(200).json({
+            success: true,
+            data: { cost: 0, method: selectedMethod.name, displayName: selectedMethod.displayName }
+          });
+        }
+        return res.status(200).json({
+          success: true,
+          data: { cost: zone.cost, method: selectedMethod.name, displayName: selectedMethod.displayName }
+        });
+      }
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        cost: selectedMethod.cost,
+        method: selectedMethod.name,
+        displayName: selectedMethod.displayName,
+        minDays: selectedMethod.minDays,
+        maxDays: selectedMethod.maxDays
+      }
+    });
+    
+  } catch (error) {
+    console.error('Calculate shipping cost error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+```
+
+## Tax Setting Controller (controllers/taxController.js)
+
+```javascript
+const TaxSetting = require('../models/TaxSetting');
+const AuditLog = require('../models/AuditLog');
+
+// Create audit log
+const createAuditLog = async (userId, action, entity, entityId, details, status = 'SUCCESS', req = null) => {
+  try {
+    await AuditLog.create({
+      user: userId,
+      action,
+      entity,
+      entityId,
+      details,
+      status,
+      ipAddress: req?.ip || req?.connection?.remoteAddress,
+      userAgent: req?.headers?.['user-agent']
+    });
+  } catch (error) {
+    console.error('Audit log error:', error);
+  }
+};
+
+// @desc    Get tax settings
+// @route   GET /api/tax/settings
+// @access  Public
+exports.getTaxSettings = async (req, res) => {
+  try {
+    let settings = await TaxSetting.findOne();
+    
+    if (!settings) {
+      // Return default settings
+      settings = {
+        globalTaxRate: 10,
+        taxIncludedInPrice: false,
+        taxRules: [],
+        applyTaxToShipping: false
+      };
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: settings
+    });
+    
+  } catch (error) {
+    console.error('Get tax settings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update tax settings
+// @route   PUT /api/tax/settings
+// @access  Private/Admin
+exports.updateTaxSettings = async (req, res) => {
+  try {
+    const { globalTaxRate, taxIncludedInPrice, taxRules, applyTaxToShipping } = req.body;
+    
+    let settings = await TaxSetting.findOne();
+    
+    if (!settings) {
+      settings = new TaxSetting();
+    }
+    
+    if (globalTaxRate !== undefined) settings.globalTaxRate = globalTaxRate;
+    if (taxIncludedInPrice !== undefined) settings.taxIncludedInPrice = taxIncludedInPrice;
+    if (taxRules !== undefined) settings.taxRules = taxRules;
+    if (applyTaxToShipping !== undefined) settings.applyTaxToShipping = applyTaxToShipping;
+    
+    settings.updatedBy = req.user._id;
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'TaxSetting',
+      settings._id,
+      {
+        globalTaxRate,
+        taxIncludedInPrice,
+        taxRulesCount: taxRules?.length,
+        applyTaxToShipping
+      },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: settings,
+      message: 'Tax settings updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('Update tax settings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Add tax rule
+// @route   POST /api/tax/rules
+// @access  Private/Admin
+exports.addTaxRule = async (req, res) => {
+  try {
+    const { name, country, state, city, postalCode, rate, priority } = req.body;
+    
+    let settings = await TaxSetting.findOne();
+    if (!settings) {
+      settings = new TaxSetting();
+    }
+    
+    const newRule = {
+      name,
+      country,
+      state,
+      city,
+      postalCode,
+      rate,
+      priority: priority || 0,
+      isActive: true
+    };
+    
+    settings.taxRules.push(newRule);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'CREATE',
+      'TaxRule',
+      null,
+      { rule: newRule },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(201).json({
+      success: true,
+      data: newRule,
+      message: 'Tax rule added successfully'
+    });
+    
+  } catch (error) {
+    console.error('Add tax rule error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update tax rule
+// @route   PUT /api/tax/rules/:ruleId
+// @access  Private/Admin
+exports.updateTaxRule = async (req, res) => {
+  try {
+    const { ruleId } = req.params;
+    const updates = req.body;
+    
+    const settings = await TaxSetting.findOne();
+    if (!settings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tax settings not found'
+      });
+    }
+    
+    const ruleIndex = settings.taxRules.findIndex(r => r._id.toString() === ruleId);
+    if (ruleIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tax rule not found'
+      });
+    }
+    
+    Object.assign(settings.taxRules[ruleIndex], updates);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'TaxRule',
+      ruleId,
+      { updates },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: settings.taxRules[ruleIndex],
+      message: 'Tax rule updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('Update tax rule error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Delete tax rule
+// @route   DELETE /api/tax/rules/:ruleId
+// @access  Private/Admin
+exports.deleteTaxRule = async (req, res) => {
+  try {
+    const { ruleId } = req.params;
+    
+    const settings = await TaxSetting.findOne();
+    if (!settings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tax settings not found'
+      });
+    }
+    
+    const ruleIndex = settings.taxRules.findIndex(r => r._id.toString() === ruleId);
+    if (ruleIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tax rule not found'
+      });
+    }
+    
+    const deletedRule = settings.taxRules[ruleIndex];
+    settings.taxRules.splice(ruleIndex, 1);
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'DELETE',
+      'TaxRule',
+      ruleId,
+      { deletedRule },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      message: 'Tax rule deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('Delete tax rule error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Toggle tax rule status
+// @route   PUT /api/tax/rules/:ruleId/toggle
+// @access  Private/Admin
+exports.toggleTaxRule = async (req, res) => {
+  try {
+    const { ruleId } = req.params;
+    
+    const settings = await TaxSetting.findOne();
+    if (!settings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tax settings not found'
+      });
+    }
+    
+    const rule = settings.taxRules.id(ruleId);
+    if (!rule) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tax rule not found'
+      });
+    }
+    
+    rule.isActive = !rule.isActive;
+    await settings.save();
+    
+    await createAuditLog(
+      req.user._id,
+      'UPDATE',
+      'TaxRule',
+      ruleId,
+      { isActive: rule.isActive },
+      'SUCCESS',
+      req
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: rule,
+      message: `Tax rule ${rule.isActive ? 'activated' : 'deactivated'} successfully`
+    });
+    
+  } catch (error) {
+    console.error('Toggle tax rule error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Calculate tax
+// @route   POST /api/tax/calculate
+// @access  Public
+exports.calculateTax = async (req, res) => {
+  try {
+    const { subtotal, shippingCost, country, state, city, postalCode, taxIncluded = false } = req.body;
+    
+    const settings = await TaxSetting.findOne();
+    if (!settings) {
+      // Return default tax calculation (10%)
+      const tax = (subtotal + (shippingCost || 0)) * 0.1;
+      return res.status(200).json({
+        success: true,
+        data: { tax, rate: 10, details: { type: 'default' } }
+      });
+    }
+    
+    let taxRate = settings.globalTaxRate;
+    let taxDetails = { type: 'global', rate: taxRate };
+    
+    // Check for specific tax rules
+    if (settings.taxRules.length > 0) {
+      const applicableRules = settings.taxRules.filter(rule => {
+        if (!rule.isActive) return false;
+        
+        let matches = true;
+        if (rule.country && rule.country !== country) matches = false;
+        if (rule.state && rule.state !== state) matches = false;
+        if (rule.city && rule.city !== city) matches = false;
+        if (rule.postalCode && rule.postalCode !== postalCode) matches = false;
+        return matches;
+      });
+      
+      if (applicableRules.length > 0) {
+        // Sort by priority and get the highest priority
+        applicableRules.sort((a, b) => b.priority - a.priority);
+        taxRate = applicableRules[0].rate;
+        taxDetails = { type: 'specific', rule: applicableRules[0].name, rate: taxRate };
+      }
+    }
+    
+    let taxableAmount = subtotal;
+    if (settings.applyTaxToShipping) {
+      taxableAmount += shippingCost || 0;
+    }
+    
+    let tax = 0;
+    if (!taxIncluded && !settings.taxIncludedInPrice) {
+      tax = (taxableAmount * taxRate) / 100;
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: { tax, rate: taxRate, details: taxDetails, taxableAmount }
+    });
+    
+  } catch (error) {
+    console.error('Calculate tax error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server Error',
+      error: error.message
+    });
+  }
+};
+```
+
+## Coupon Routes (routes/couponRoutes.js)
+
+```javascript
+const express = require('express');
+const {
+  validateCoupon,
+  getAvailableCoupons,
+  createCoupon,
+  getAllCoupons,
+  getCoupon,
+  updateCoupon,
+  deleteCoupon,
+  toggleCouponStatus,
+  getCouponStats
+} = require('../controllers/couponController');
+const { protect } = require('../middleware/authMiddleware');
+const { authorize } = require('../middleware/roleMiddleware');
+
+const router = express.Router();
+
+// ============================================
+// PUBLIC ROUTES
+// ============================================
+router.post('/validate', validateCoupon);
+
+// ============================================
+// CUSTOMER ROUTES
+// ============================================
+router.get('/available', protect, getAvailableCoupons);
+
+// ============================================
+// ADMIN ROUTES
+// ============================================
+router.get('/admin/stats', protect, authorize('admin', 'super-admin'), getCouponStats);
+router.get('/admin/all', protect, authorize('admin', 'super-admin'), getAllCoupons);
+router.post('/', protect, authorize('admin', 'super-admin'), createCoupon);
+router.get('/:id', protect, authorize('admin', 'super-admin'), getCoupon);
+router.put('/:id', protect, authorize('admin', 'super-admin'), updateCoupon);
+router.delete('/:id', protect, authorize('admin', 'super-admin'), deleteCoupon);
+router.put('/:id/toggle-status', protect, authorize('admin', 'super-admin'), toggleCouponStatus);
+
+module.exports = router;
+```
+
+## Shipping Routes (routes/shippingRoutes.js)
+
+```javascript
+const express = require('express');
+const {
+  getShippingSettings,
+  updateShippingSettings,
+  addShippingMethod,
+  updateShippingMethod,
+  deleteShippingMethod,
+  addShippingZone,
+  updateShippingZone,
+  deleteShippingZone,
+  calculateShippingCost
+} = require('../controllers/shippingController');
+const { protect } = require('../middleware/authMiddleware');
+const { authorize } = require('../middleware/roleMiddleware');
+
+const router = express.Router();
+
+// ============================================
+// PUBLIC ROUTES
+// ============================================
+router.get('/settings', getShippingSettings);
+router.post('/calculate', calculateShippingCost);
+
+// ============================================
+// ADMIN ROUTES
+// ============================================
+router.put('/settings', protect, authorize('admin', 'super-admin'), updateShippingSettings);
+
+// Shipping Methods
+router.post('/methods', protect, authorize('admin', 'super-admin'), addShippingMethod);
+router.put('/methods/:methodName', protect, authorize('admin', 'super-admin'), updateShippingMethod);
+router.delete('/methods/:methodName', protect, authorize('admin', 'super-admin'), deleteShippingMethod);
+
+// Shipping Zones
+router.post('/zones', protect, authorize('admin', 'super-admin'), addShippingZone);
+router.put('/zones/:zoneName', protect, authorize('admin', 'super-admin'), updateShippingZone);
+router.delete('/zones/:zoneName', protect, authorize('admin', 'super-admin'), deleteShippingZone);
+
+module.exports = router;
+```
+
+## Tax Routes (routes/taxRoutes.js)
+
+```javascript
+const express = require('express');
+const {
+  getTaxSettings,
+  updateTaxSettings,
+  addTaxRule,
+  updateTaxRule,
+  deleteTaxRule,
+  toggleTaxRule,
+  calculateTax
+} = require('../controllers/taxController');
+const { protect } = require('../middleware/authMiddleware');
+const { authorize } = require('../middleware/roleMiddleware');
+
+const router = express.Router();
+
+// ============================================
+// PUBLIC ROUTES
+// ============================================
+router.get('/settings', getTaxSettings);
+router.post('/calculate', calculateTax);
+
+// ============================================
+// ADMIN ROUTES
+// ============================================
+router.put('/settings', protect, authorize('admin', 'super-admin'), updateTaxSettings);
+
+// Tax Rules
+router.post('/rules', protect, authorize('admin', 'super-admin'), addTaxRule);
+router.put('/rules/:ruleId', protect, authorize('admin', 'super-admin'), updateTaxRule);
+router.delete('/rules/:ruleId', protect, authorize('admin', 'super-admin'), deleteTaxRule);
+router.put('/rules/:ruleId/toggle', protect, authorize('admin', 'super-admin'), toggleTaxRule);
+
+module.exports = router;
+```
+
+## Updated app.js
+
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const path = require('path');
+require('dotenv').config();
+
+// Import Routes
+const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
+const productRoutes = require('./routes/productRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+const shippingRoutes = require('./routes/shippingRoutes');
+const taxRoutes = require('./routes/taxRoutes');
+const auditRoutes = require('./routes/auditRoutes');
+
+const app = express();
+
+// ============================================
+// SECURITY & MIDDLEWARE
+// ============================================
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply rate limiting to API routes
+app.use('/api/', limiter);
+
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Security middleware
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+      fontSrc: ["'self'", "fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+    },
+  },
+}));
+
+// CORS configuration
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+}));
+
+// Compression
+app.use(compression());
+
+// Logging
+if (process.env.NODE_ENV === 'development') {
+  app.use(morgan('dev'));
+} else {
+  app.use(morgan('combined'));
+}
+
+// Static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ============================================
+// DATABASE CONNECTION
+// ============================================
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ecommerce', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('✅ MongoDB connected successfully'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
+
+// ============================================
+// API ROUTES
+// ============================================
+
+// Health check
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV
+  });
+});
+
+// API version prefix
+const apiPrefix = '/api/v1';
+
+// Auth routes
+app.use(`${apiPrefix}/auth`, authRoutes);
+
+// User routes
+app.use(`${apiPrefix}/users`, userRoutes);
+
+// Product routes
+app.use(`${apiPrefix}/products`, productRoutes);
+
+// Category routes
+app.use(`${apiPrefix}/categories`, categoryRoutes);
+
+// Order routes
+app.use(`${apiPrefix}/orders`, orderRoutes);
+
+// Coupon routes
+app.use(`${apiPrefix}/coupons`, couponRoutes);
+
+// Shipping routes
+app.use(`${apiPrefix}/shipping`, shippingRoutes);
+
+// Tax routes
+app.use(`${apiPrefix}/tax`, taxRoutes);
+
+// Audit routes
+app.use(`${apiPrefix}/audit-logs`, auditRoutes);
+
+// ============================================
+// ERROR HANDLING MIDDLEWARE
+// ============================================
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Cannot find ${req.originalUrl} on this server`,
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err.stack);
+  
+  // Mongoose validation error
+  if (err.name === 'ValidationError') {
+    const errors = Object.values(err.errors).map(e => e.message);
+    return res.status(400).json({
+      success: false,
+      message: 'Validation Error',
+      errors,
+    });
+  }
+  
+  // Mongoose duplicate key error
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyPattern)[0];
+    return res.status(400).json({
+      success: false,
+      message: `${field} already exists`,
+    });
+  }
+  
+  // JWT error
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid token',
+    });
+  }
+  
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({
+      success: false,
+      message: 'Token expired',
+    });
+  }
+  
+  // Default error
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'Internal Server Error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+  });
+});
+
+// ============================================
+// START SERVER
+// ============================================
+const PORT = process.env.PORT || 5000;
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 API URL: http://localhost:${PORT}${apiPrefix}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed');
+      process.exit(0);
+    });
+  });
+});
+
+module.exports = app;
+```
+
+## Summary of Implemented Features:
+
+### Coupon System:
+- ✅ Create, update, delete coupons
+- ✅ Percentage or fixed amount discounts
+- ✅ Minimum purchase requirements
+- ✅ Usage limits (global and per user)
+- ✅ Date range validity
+- ✅ Product/category specific coupons
+- ✅ Free shipping option
+- ✅ First order only coupons
+- ✅ Stackable coupons
+- ✅ Coupon validation endpoint
+- ✅ Available coupons for user
+- ✅ Coupon statistics dashboard
+
+### Shipping System:
+- ✅ Multiple shipping methods (standard, express, overnight)
+- ✅ Shipping zones by country
+- ✅ Free shipping thresholds
+- ✅ Add/edit/delete shipping methods
+- ✅ Add/edit/delete shipping zones
+- ✅ Calculate shipping cost endpoint
+- ✅ Default shipping method setting
+
+### Tax System:
+- ✅ Global tax rate setting
+- ✅ Tax rules by region (country, state, city, postal code)
+- ✅ Tax included in price option
+- ✅ Apply tax to shipping option
+- ✅ Priority-based tax rules
+- ✅ Add/edit/delete tax rules
+- ✅ Toggle tax rule status
+- ✅ Calculate tax endpoint
+
+### Security:
+- ✅ Rate limiting
+- ✅ Helmet security headers
+- ✅ CORS configuration
+- ✅ Role-based access (admin/super-admin)
+- ✅ Input validation
+- ✅ Error handling middleware
+
+The system now fully supports guest and registered user checkout with coupons, shipping calculations, tax calculations, and comprehensive admin management for all settings.
+
+Here's the updated app.js with all the new routes (coupon, shipping, tax) and proper middleware setup:
+
+```javascript
+const express = require('express');
+const dotenv = require('dotenv');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const connectDB = require('./config/database');
+
+// Load env vars
+dotenv.config();
+
+// Connect to database
+connectDB();
+
+// Route files
+const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
+const auditRoutes = require('./routes/auditRoutes');
+const productRoutes = require('./routes/productRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
+const customerRoutes = require('./routes/customerRoutes');
+const adminCustomerRoutes = require('./routes/adminCustomerRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const newsletterRoutes = require('./routes/newsletterRoutes');
+const heroRoutes = require('./routes/heroRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+const shippingRoutes = require('./routes/shippingRoutes');
+const taxRoutes = require('./routes/taxRoutes');
+
+const app = express();
+
+// ============================================
+// SECURITY MIDDLEWARE
+// ============================================
+
+// Rate limiting to prevent abuse
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: {
+    success: false,
+    message: 'Too many requests from this IP, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply rate limiting to all API routes
+app.use('/api/', limiter);
+
+// Helmet for security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+      fontSrc: ["'self'", "fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https://res.cloudinary.com", "https://api.qrserver.com", "https://barcode.tec-it.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      connectSrc: ["'self'", "https://api.qrserver.com"],
+    },
+  },
+}));
+
+// CORS configuration
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Disposition'],
+};
+
+app.use(cors(corsOptions));
+
+// Compression for better performance
+app.use(compression());
+
+// Body parser with increased limit for image uploads
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Logging middleware
+if (process.env.NODE_ENV === 'development') {
+  app.use(morgan('dev'));
+} else {
+  app.use(morgan('combined'));
+}
+
+// ============================================
+// HEALTH CHECK ENDPOINT
+// ============================================
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    uptime: process.uptime(),
+  });
+});
+
+// ============================================
+// API VERSION PREFIX
+// ============================================
+const apiPrefix = '/api/v1';
+
+// ============================================
+// MOUNT ROUTES
+// ============================================
+
+// Authentication & Users
+app.use(`${apiPrefix}/auth`, authRoutes);
+app.use(`${apiPrefix}/users`, userRoutes);
+
+// Audit Logs
+app.use(`${apiPrefix}/audit-logs`, auditRoutes);
+
+// Products & Categories
+app.use(`${apiPrefix}/products`, productRoutes);
+app.use(`${apiPrefix}/categories`, categoryRoutes);
+
+// Customers
+app.use(`${apiPrefix}/customers`, customerRoutes);
+app.use(`${apiPrefix}/admin/customers`, adminCustomerRoutes);
+
+// Orders
+app.use(`${apiPrefix}/orders`, orderRoutes);
+
+// Coupons (NEW)
+app.use(`${apiPrefix}/coupons`, couponRoutes);
+
+// Shipping Settings (NEW)
+app.use(`${apiPrefix}/shipping`, shippingRoutes);
+
+// Tax Settings (NEW)
+app.use(`${apiPrefix}/tax`, taxRoutes);
+
+// Newsletter & Hero
+app.use(`${apiPrefix}/newsletter`, newsletterRoutes);
+app.use(`${apiPrefix}/hero`, heroRoutes);
+app.use(`${apiPrefix}/admin/hero`, heroRoutes);
+
+// ============================================
+// STATIC FILES (for uploads if needed)
+// ============================================
+app.use('/uploads', express.static('uploads'));
+
+// ============================================
+// ERROR HANDLING MIDDLEWARE
+// ============================================
+
+// 404 handler for undefined routes
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Cannot find ${req.originalUrl} on this server`,
+    path: req.originalUrl,
+    method: req.method,
+  });
+});
+
+// Mongoose duplicate key error handler
+const handleDuplicateKeyError = (err) => {
+  const field = Object.keys(err.keyPattern)[0];
+  return {
+    status: 400,
+    message: `${field} already exists. Please use a different ${field}.`,
+  };
+};
+
+// Mongoose validation error handler
+const handleValidationError = (err) => {
+  const errors = Object.values(err.errors).map(e => e.message);
+  return {
+    status: 400,
+    message: 'Validation Error',
+    errors,
+  };
+};
+
+// JWT error handler
+const handleJWTError = () => ({
+  status: 401,
+  message: 'Invalid token. Please log in again.',
+});
+
+const handleJWTExpiredError = () => ({
+  status: 401,
+  message: 'Your token has expired. Please log in again.',
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err.stack);
+  
+  let error = { ...err };
+  error.message = err.message;
+  error.status = err.status || 500;
+  
+  // Handle specific Mongoose errors
+  if (err.code === 11000) {
+    const handled = handleDuplicateKeyError(err);
+    error.status = handled.status;
+    error.message = handled.message;
+  }
+  
+  if (err.name === 'ValidationError') {
+    const handled = handleValidationError(err);
+    error.status = handled.status;
+    error.message = handled.message;
+    error.errors = handled.errors;
+  }
+  
+  if (err.name === 'JsonWebTokenError') {
+    const handled = handleJWTError();
+    error.status = handled.status;
+    error.message = handled.message;
+  }
+  
+  if (err.name === 'TokenExpiredError') {
+    const handled = handleJWTExpiredError();
+    error.status = handled.status;
+    error.message = handled.message;
+  }
+  
+  // Send error response
+  res.status(error.status).json({
+    success: false,
+    message: error.message,
+    ...(error.errors && { errors: error.errors }),
+    ...(process.env.NODE_ENV === 'development' && {
+      stack: err.stack,
+      originalError: err.toString(),
+    }),
+  });
+});
+
+// ============================================
+// UNHANDLED PROMISE REJECTIONS
+// ============================================
+process.on('unhandledRejection', (err) => {
+  console.error('UNHANDLED REJECTION! 💥 Shutting down...');
+  console.error(err.name, err.message);
+  console.error(err.stack);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION! 💥 Shutting down...');
+  console.error(err.name, err.message);
+  console.error(err.stack);
+  process.exit(1);
+});
+
+module.exports = app;
+```
+
+## Updated Configuration File (config/database.js)
+
+```javascript
+const mongoose = require('mongoose');
+
+const connectDB = async () => {
+  try {
+    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ecommerce', {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+    console.log(`📊 Database Name: ${conn.connection.name}`);
+    
+    // Handle connection events
+    mongoose.connection.on('error', (err) => {
+      console.error('MongoDB connection error:', err);
+    });
+    
+    mongoose.connection.on('disconnected', () => {
+      console.log('MongoDB disconnected');
+    });
+    
+    mongoose.connection.on('reconnected', () => {
+      console.log('MongoDB reconnected');
+    });
+    
+    return conn;
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error.message);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+```
+
+## Environment Variables (.env file)
+
+```env
+# Server Configuration
+NODE_ENV=development
+PORT=5000
+FRONTEND_URL=http://localhost:3000
+
+# MongoDB
+MONGODB_URI=mongodb://localhost:27017/ecommerce
+
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+JWT_EXPIRE=30d
+JWT_COOKIE_EXPIRE=30
+
+# Cloudinary
+CLOUDINARY_CLOUD_NAME=your-cloud-name
+CLOUDINARY_API_KEY=your-api-key
+CLOUDINARY_API_SECRET=your-api-secret
+
+# Email (SMTP)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=noreply@yourstore.com
+ADMIN_EMAIL=admin@yourstore.com
+
+# Payment Gateway (Optional)
+STRIPE_SECRET_KEY=sk_test_...
+PAYPAL_CLIENT_ID=...
+PAYPAL_CLIENT_SECRET=...
+RAZORPAY_KEY_ID=...
+RAZORPAY_KEY_SECRET=...
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+
+# CORS
+CORS_ORIGIN=http://localhost:3000,http://localhost:3001
+```
+
+## Package.json Dependencies to Add
+
+```json
+{
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^7.5.0",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "morgan": "^1.10.0",
+    "compression": "^1.7.4",
+    "express-rate-limit": "^6.10.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "multer-storage-cloudinary": "^4.0.0",
+    "cloudinary": "^1.37.3",
+    "nodemailer": "^6.9.5",
+    "pdfkit": "^0.14.0",
+    "moment": "^2.29.4",
+    "mongoose-paginate-v2": "^1.7.4",
+    "express-validator": "^7.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+```
+
+## Key Updates Made:
+
+1. **Added New Routes:**
+   - Coupon routes (`/api/v1/coupons`)
+   - Shipping routes (`/api/v1/shipping`)
+   - Tax routes (`/api/v1/tax`)
+
+2. **Enhanced Security:**
+   - Added Helmet for security headers
+   - Added rate limiting to prevent abuse
+   - Improved CORS configuration
+   - Added request body size limits
+
+3. **Improved Error Handling:**
+   - Specific handlers for Mongoose errors (duplicate key, validation)
+   - JWT error handlers
+   - Unhandled promise rejection handler
+   - Uncaught exception handler
+
+4. **Added API Versioning:**
+   - All routes now under `/api/v1/` prefix
+   - Easier to maintain backward compatibility
+
+5. **Health Check Endpoint:**
+   - `/health` endpoint for monitoring
+   - Returns server status and uptime
+
+6. **Better Logging:**
+   - Morgan logging with environment-based configuration
+   - Detailed error logging
+
+7. **Compression:**
+   - Added compression for better performance
+
+8. **Static Files:**
+   - `/uploads` directory for serving static files
+
+9. **Environment Configuration:**
+   - Complete .env file with all necessary variables
+   - Database connection with event handlers
+
+The updated app.js now includes all the new functionality (coupons, shipping, tax) with proper security, error handling, and performance optimizations.
