@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
-import ProductCard from '../components/common/ProductCard';
+import ProductCard from '../components/Layout/ProductCard';
 
 const ShopPage = () => {
   const [products, setProducts] = useState([]);

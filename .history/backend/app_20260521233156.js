@@ -1,5 +1,6 @@
 const express = require('express');
 const dotenv = require('dotenv');
+const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
@@ -62,6 +63,25 @@ app.use(helmet({
     },
   },
 }));
+
+// CORS configuration
+const corsOptions = {
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3001',
+    'http://localhost:3000',
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+  ],
+  exposedHeaders: ['Content-Disposition'],
+};
+
+app.use(cors(corsOptions));
 
 // Compression for better performance
 app.use(compression());

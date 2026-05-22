@@ -3,7 +3,6 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { WishlistProvider } from './context/WishlistContext';
-import Layout from './components/Layout/Layout';
 
 // Pages
 import HomePage from './pages/HomePage';
@@ -15,7 +14,7 @@ import OrdersPage from './pages/OrdersPage';
 import OrderDetailPage from './pages/OrderDetailPage';
 import WishlistPage from './pages/WishlistPage';
 import Login from './pages/LoginPage';
-import Register from './pages/RegisterPage';
+import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Profile from './pages/ProfilePage';
 
@@ -26,33 +25,30 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
-// Wrap page with Layout
-const PageWrapper = ({ children }) => <Layout>{children}</Layout>;
-
 function App() {
   return (
     <AuthProvider>
       <CartProvider>
         <WishlistProvider>
           <Routes>
-            {/* Public Routes with Layout */}
-            <Route path="/" element={<PageWrapper><HomePage /></PageWrapper>} />
-            <Route path="/shop" element={<PageWrapper><ShopPage /></PageWrapper>} />
-            <Route path="/product/:id" element={<PageWrapper><ProductDetailPage /></PageWrapper>} />
-            <Route path="/cart" element={<PageWrapper><CartPage /></PageWrapper>} />
+            {/* Public Routes */}
+            <Route path="/" element={<HomePage />} />
+            <Route path="/shop" element={<ShopPage />} />
+            <Route path="/product/:id" element={<ProductDetailPage />} />
+            <Route path="/cart" element={<CartPage />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             
-            {/* Protected Routes with Layout */}
-            <Route path="/checkout" element={<ProtectedRoute><PageWrapper><CheckoutPage /></PageWrapper></ProtectedRoute>} />
-            <Route path="/orders" element={<ProtectedRoute><PageWrapper><OrdersPage /></PageWrapper></ProtectedRoute>} />
-            <Route path="/order/:id" element={<ProtectedRoute><PageWrapper><OrderDetailPage /></PageWrapper></ProtectedRoute>} />
-            <Route path="/wishlist" element={<ProtectedRoute><PageWrapper><WishlistPage /></PageWrapper></ProtectedRoute>} />
-            <Route path="/dashboard" element={<ProtectedRoute><PageWrapper><Dashboard /></PageWrapper></ProtectedRoute>} />
-            <Route path="/profile" element={<ProtectedRoute><PageWrapper><Profile /></PageWrapper></ProtectedRoute>} />
+            {/* Protected Routes */}
+            <Route path="/checkout" element={<ProtectedRoute><CheckoutPage /></ProtectedRoute>} />
+            <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+            <Route path="/order/:id" element={<ProtectedRoute><OrderDetailPage /></ProtectedRoute>} />
+            <Route path="/wishlist" element={<ProtectedRoute><WishlistPage /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
             
             {/* 404 */}
-            <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </WishlistProvider>
       </CartProvider>

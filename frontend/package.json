@@ -26,6 +26,7 @@
     "react-router-dom": "^7.15.1",
     "react-select": "^5.10.2",
     "react-slick": "^0.31.0",
+    "recharts": "^3.8.1",
     "slick-carousel": "^1.8.1",
     "swiper": "^12.1.4"
   },
