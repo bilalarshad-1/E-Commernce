@@ -35,19 +35,19 @@ const app = express();
 // ============================================
 
 // Rate limiting to prevent abuse
-// const limiter = rateLimit({
-//   windowMs: 15 * 60 * 1000, // 15 minutes
-//   max: 100, // limit each IP to 100 requests per windowMs
-//   message: {
-//     success: false,
-//     message: 'Too many requests from this IP, please try again later.'
-//   },
-//   standardHeaders: true,
-//   legacyHeaders: false,
-// });
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: {
+    success: false,
+    message: 'Too many requests from this IP, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
-// // Apply rate limiting to all API routes
-// app.use('/api/', limiter);
+// Apply rate limiting to all API routes
+app.use('/api/', limiter);
 
 // Helmet for security headers
 app.use(helmet({
@@ -83,12 +83,12 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Compression for better performance
+Compression for better performance
 app.use(compression());
 
 // Body parser with increased limit for image uploads
-// app.use(express.json({ limit: '10mb' }));
-// app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logging middleware
 if (process.env.NODE_ENV === 'development') {

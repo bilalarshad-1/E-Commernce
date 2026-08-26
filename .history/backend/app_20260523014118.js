@@ -87,8 +87,8 @@ app.use(cors(corsOptions));
 app.use(compression());
 
 // Body parser with increased limit for image uploads
-// app.use(express.json({ limit: '10mb' }));
-// app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logging middleware
 if (process.env.NODE_ENV === 'development') {
